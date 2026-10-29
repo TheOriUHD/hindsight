@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/capture", "crates/spike"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+windows = "0.61"
+windows-core = "0.61"
+anyhow = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = 1

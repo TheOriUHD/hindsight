@@ -10,10 +10,17 @@ serde.workspace = true
 serde_json.workspace = true
 log = "0.4"
 dirs = "6"
+windows-numerics = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 hindsight-capture = { path = "../capture" }
 hindsight-encode = { path = "../encode" }
 windows = { workspace = true, features = [
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D11",
     "Win32_Media_Audio",

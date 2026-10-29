@@ -27,6 +27,8 @@ pub struct EncoderConfig {
     pub cq: u32,
     /// Peak bitrate cap so fast motion can't blow up the buffer.
     pub max_kbps: u32,
+    /// Keyframe interval in frames; 0 = one per second. 1 = all-intra (scrub proxy).
+    pub gop: u32,
 }
 
 /// Constant-frame-rate hardware encoder. Frames are addressed by slot number
@@ -123,8 +125,9 @@ impl VideoEncoder {
             c.sw_pix_fmt = ff::AVPixelFormat::AV_PIX_FMT_NV12;
             c.time_base = ff::AVRational { num: 1, den: cfg.fps as i32 };
             c.framerate = ff::AVRational { num: cfg.fps as i32, den: 1 };
-            c.gop_size = cfg.fps as i32; // 1 s keyframes => precise, instant clip cuts
-            c.max_b_frames = 2;
+            // 1 s keyframes => precise, instant clip cuts.
+            c.gop_size = if cfg.gop > 0 { cfg.gop as i32 } else { cfg.fps as i32 };
+            c.max_b_frames = if cfg.gop == 1 { 0 } else { 2 };
             c.bit_rate = 0;
             c.rc_max_rate = cfg.max_kbps as i64 * 1000;
             c.rc_buffer_size = (cfg.max_kbps as i64 * 1000 * 2) as i32;
@@ -138,7 +141,9 @@ impl VideoEncoder {
             // Pixels per second decides how much encoder effort fits in real time
             // (p5 handles ~4K60; 4K240 needs p1).
             let pixel_rate = cfg.width as f64 * cfg.height as f64 * cfg.fps as f64;
-            let preset = if pixel_rate <= 5.5e8 {
+            let preset = if cfg.gop == 1 {
+                "p1"
+            } else if pixel_rate <= 5.5e8 {
                 "p5"
             } else if pixel_rate <= 1.1e9 {
                 "p3"
@@ -154,7 +159,7 @@ impl VideoEncoder {
                     ("rc", "vbr".into()),
                     ("cq", cfg.cq.to_string()),
                     ("spatial-aq", "1".into()),
-                    ("b_ref_mode", "middle".into()),
+                    ("b_ref_mode", if cfg.gop == 1 { "disabled" } else { "middle" }.into()),
                     ("forced-idr", "1".into()),
                 ]
             } else if name.ends_with("_amf") {

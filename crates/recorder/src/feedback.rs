@@ -49,13 +49,28 @@ pub fn play_chime() {
     }
 }
 
+/// True for our own UI process (same exe, `--ui`).
+fn is_hindsight_process(pid: u32) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+    let Ok(me) = std::env::current_exe() else { return false };
+    unsafe {
+        let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = CloseHandle(h);
+        ok && std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])) == me
+    }
+}
+
 /// Title of the foreground window, cleaned for use in a filename.
 pub fn foreground_title() -> String {
     unsafe {
         let hwnd = GetForegroundWindow();
         let mut pid = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid == GetCurrentProcessId() {
+        if pid == GetCurrentProcessId() || is_hindsight_process(pid) {
             return "Desktop".into();
         }
         let mut buf = [0u16; 256];

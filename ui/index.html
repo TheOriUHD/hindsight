@@ -113,6 +113,7 @@
           <div class="row"><span>Clips folder</span><span class="path" id="out-dir"></span><button type="button" class="btn ghost small" id="pick-dir">Change…</button></div>
           <label class="row toggle"><span>Start with Windows</span><input type="checkbox" name="start_with_windows" /><i></i></label>
           <label class="row toggle"><span>Play a sound when a clip is saved</span><input type="checkbox" name="save_sound" /><i></i></label>
+          <label class="row toggle"><span>Show a "Clip saved" popup on screen</span><input type="checkbox" name="save_overlay" /><i></i></label>
         </div>
         <p class="saved" id="saved">Saved</p>
       </form>
@@ -131,6 +132,7 @@
       </div>
       <div class="video-wrap">
         <video id="video" preload="auto"></video>
+        <video id="scrub" class="scrub" preload="auto" muted></video>
         <div class="video-error" id="video-error" hidden>
           <p>This clip's codec can't be previewed here.</p>
           <button class="btn ghost small" id="p-external2">Open in default player</button>

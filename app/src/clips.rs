@@ -263,6 +263,51 @@ pub fn export_for_size(src: &Path, start: f64, end: f64, target_mb: f64, recordi
     Ok(dst)
 }
 
+/// The 360p all-keyframe copy the player scrubs through. The recorder writes
+/// one with every clip; for older clips and trims it's built here in the
+/// background (low priority) and `on_ready` fires when done.
+pub fn scrub_proxy(clip: &Path, recording_encoder: &str, on_ready: impl FnOnce(PathBuf, PathBuf) + Send + 'static) -> Option<PathBuf> {
+    let proxy = hindsight_recorder::scrub_path(clip);
+    let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    if proxy.exists() && modified(&proxy) >= modified(clip) {
+        return Some(proxy);
+    }
+    let (clip, enc) = (clip.to_path_buf(), h264_encoder(recording_encoder));
+    std::thread::spawn(move || {
+        static BUSY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _one_at_a_time = BUSY.lock().unwrap();
+        let _ = std::fs::create_dir_all(proxy.parent().unwrap());
+        let tmp = proxy.with_extension("tmp.mp4");
+        let mut args: Vec<String> = vec!["-v".into(), "error".into(), "-y".into(), "-hwaccel".into(), "auto".into(), "-i".into(), clip.to_string_lossy().into()];
+        args.extend(["-an", "-vf", "fps=30,scale=-2:360", "-c:v", enc, "-g", "1", "-bf", "0"].map(String::from));
+        if enc == "h264_nvenc" {
+            args.extend(["-preset", "p1", "-rc", "constqp", "-qp", "30"].map(String::from));
+        } else {
+            args.extend(["-b:v", "6M"].map(String::from));
+        }
+        args.extend(["-movflags".into(), "+faststart".into(), tmp.to_string_lossy().into()]);
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x4000;
+        let ok = Command::new(ffmpeg_exe())
+            .args(&args)
+            .creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok && std::fs::rename(&tmp, &proxy).is_ok() {
+            on_ready(clip, proxy);
+        } else {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    });
+    None
+}
+
+pub fn delete(clip: &Path) -> Result<()> {
+    trash::delete(clip)?;
+    let _ = std::fs::remove_file(hindsight_recorder::scrub_path(clip));
+    Ok(())
+}
+
 pub fn rename(src: &Path, new_name: &str) -> Result<PathBuf> {
     let clean: String = new_name.chars().filter(|c| !"<>:\"/\\|?*".contains(*c) && !c.is_control()).collect();
     let clean = clean.trim();
@@ -274,5 +319,6 @@ pub fn rename(src: &Path, new_name: &str) -> Result<PathBuf> {
         bail!("a clip with that name already exists");
     }
     std::fs::rename(src, &dst)?;
+    let _ = std::fs::rename(hindsight_recorder::scrub_path(src), hindsight_recorder::scrub_path(&dst));
     Ok(dst)
 }

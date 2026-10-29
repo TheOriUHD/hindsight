@@ -87,7 +87,20 @@ async fn list_clips(handle: AppHandle) -> Res<Vec<clips::ClipInfo>> {
 
 #[tauri::command]
 fn delete_clip(path: PathBuf) -> Res<()> {
-    trash::delete(&path).map_err(err)
+    clips::delete(&path).map_err(err)
+}
+
+#[tauri::command]
+async fn scrub_proxy(handle: AppHandle, path: PathBuf) -> Option<PathBuf> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let enc = recording_encoder();
+        clips::scrub_proxy(&path, &enc, move |clip, proxy| {
+            let _ = handle.emit("scrub-ready", (clip, proxy));
+        })
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 #[tauri::command]
@@ -155,6 +168,9 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             allow_dir(&handle, &clips::thumbs_dir());
+            let scrub_dir = hindsight_recorder::data_dir().join("scrub");
+            let _ = std::fs::create_dir_all(&scrub_dir);
+            allow_dir(&handle, &scrub_dir);
             if let Ok(dir) = output_dir() {
                 allow_dir(&handle, &dir);
             }
@@ -175,6 +191,7 @@ pub fn run() {
             monitors,
             list_clips,
             delete_clip,
+            scrub_proxy,
             rename_clip,
             show_in_folder,
             open_external,

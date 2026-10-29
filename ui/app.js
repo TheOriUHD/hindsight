@@ -205,12 +205,14 @@ function openPlayer(c) {
   $("#player").hidden = false;
   video.play().catch(() => {});
   drawTimeline();
+  loadProxy(c.path);
 }
 
 function closePlayer() {
   video.pause();
   video.removeAttribute("src");
   video.load();
+  unloadProxy();
   $("#player").hidden = true;
   cur = null;
 }
@@ -234,8 +236,9 @@ function drawTimeline() {
   $("#sel").style.width = `${((trim.end - trim.start) / d) * 100}%`;
   $("#h-start").style.left = pct(trim.start);
   $("#h-end").style.left = pct(trim.end);
-  $("#playhead").style.left = pct(video.currentTime || 0);
-  $("#p-time").textContent = fmtTime(video.currentTime || 0);
+  const now = scrubbing ? scrubT : video._want ?? video.currentTime ?? 0;
+  $("#playhead").style.left = pct(now);
+  $("#p-time").textContent = fmtTime(now);
   $("#p-dur").textContent = fmtTime(d);
   const full = trim.start < 0.05 && trim.end > d - 0.05;
   $("#p-range").textContent = full ? `Full clip · ${fmtTime(d)}` : `Selection ${fmtTime(trim.start)} – ${fmtTime(trim.end)} (${fmtTime(trim.end - trim.start)})`;
@@ -256,40 +259,106 @@ const timeAt = (clientX) => {
   return Math.min(Math.max((clientX - r.left) / r.width, 0), 1) * duration();
 };
 
-function dragHandle(which) {
+/* ---------- scrubbing ----------
+ * While dragging, frames come from a 360p all-keyframe proxy (every seek is a
+ * single-frame decode, so it keeps up with the mouse). On release the full
+ * quality video seeks once and replaces it. Without a proxy, the main video
+ * is seeked "latest wins": one seek in flight, always to the newest position,
+ * so frames keep updating instead of every seek cancelling the last. */
+const proxy = $("#scrub");
+let proxyReady = false;
+let scrubbing = false;
+let scrubT = 0;
+let resumeAfterScrub = false;
+
+function loadProxy(path) {
+  unloadProxy();
+  invoke("scrub_proxy", { path }).then((p) => p && cur && cur.path === path && setProxy(p));
+}
+function setProxy(p) {
+  proxy.src = convertFileSrc(p) + `?v=${Date.now()}`;
+  proxy.addEventListener("loadeddata", () => (proxyReady = true), { once: true });
+}
+function unloadProxy() {
+  proxyReady = false;
+  proxy.classList.remove("on");
+  proxy.removeAttribute("src");
+  proxy.load();
+}
+listen("scrub-ready", (e) => {
+  const [clip, p] = e.payload;
+  if (cur && cur.path === clip) setProxy(p);
+});
+
+function seekLatest(v, t) {
+  v._want = t;
+  if (v._seeking) return;
+  v._seeking = true;
+  v.currentTime = t;
+}
+for (const v of [video, proxy]) {
+  v.addEventListener("seeked", () => {
+    v._seeking = false;
+    if (v._want != null && Math.abs(v._want - v.currentTime) > 0.001) seekLatest(v, v._want);
+    else v._want = null;
+  });
+}
+
+function scrubTo(t) {
+  scrubT = Math.min(Math.max(t, 0), duration());
+  if (proxyReady) {
+    proxy.classList.add("on");
+    seekLatest(proxy, Math.min(scrubT, proxy.duration || scrubT));
+  } else {
+    seekLatest(video, scrubT);
+  }
+  drawTimeline();
+}
+
+function beginScrub() {
+  scrubbing = true;
+  resumeAfterScrub = !video.paused;
+  video.pause();
+}
+
+function endScrub() {
+  scrubbing = false;
+  seekLatest(video, scrubT);
+  // Swap back to full quality once the real frame is decoded.
+  const done = () => {
+    if (scrubbing) return;
+    if (video._seeking) return video.addEventListener("seeked", done, { once: true });
+    proxy.classList.remove("on");
+    if (resumeAfterScrub) video.play().catch(() => {});
+  };
+  video.addEventListener("seeked", done, { once: true });
+  drawTimeline();
+}
+
+function drag(onMove) {
   return (e) => {
     e.stopPropagation();
-    const move = (ev) => {
-      const t = timeAt(ev.clientX);
-      if (which === "start") trim.start = Math.min(t, trim.end - 0.2);
-      else trim.end = Math.max(t, trim.start + 0.2);
-      video.currentTime = which === "start" ? trim.start : trim.end;
-      drawTimeline();
-    };
+    beginScrub();
+    onMove(e);
+    const move = (ev) => onMove(ev);
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      endScrub();
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
 }
-$("#h-start").addEventListener("pointerdown", dragHandle("start"));
-$("#h-end").addEventListener("pointerdown", dragHandle("end"));
-$("#track").addEventListener("pointerdown", (e) => {
-  video.currentTime = timeAt(e.clientX);
-  drawTimeline();
-  const move = (ev) => {
-    video.currentTime = timeAt(ev.clientX);
-    drawTimeline();
-  };
-  const up = () => {
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", up);
-  };
-  window.addEventListener("pointermove", move);
-  window.addEventListener("pointerup", up);
-});
+$("#h-start").addEventListener("pointerdown", drag((ev) => {
+  trim.start = Math.min(timeAt(ev.clientX), trim.end - 0.2);
+  scrubTo(trim.start);
+}));
+$("#h-end").addEventListener("pointerdown", drag((ev) => {
+  trim.end = Math.max(timeAt(ev.clientX), trim.start + 0.2);
+  scrubTo(trim.end);
+}));
+$("#track").addEventListener("pointerdown", drag((ev) => scrubTo(timeAt(ev.clientX))));
 
 $("#p-play").onclick = () => (video.paused ? video.play() : video.pause());
 $("#p-close").onclick = closePlayer;
@@ -325,6 +394,7 @@ async function commitRename() {
     const path = await invoke("rename_clip", { path: cur.path, name });
     cur.path = path;
     cur.name = name;
+    loadProxy(path);
     toast("Renamed");
     loadClips();
   } catch (e) {
@@ -390,10 +460,12 @@ document.addEventListener("keydown", (e) => {
       drawTimeline();
       break;
     case "ArrowLeft":
-      video.currentTime = Math.max(0, video.currentTime - (e.shiftKey ? 5 : 1));
+      seekLatest(video, Math.max(0, (video._want ?? video.currentTime) - (e.shiftKey ? 5 : 1)));
+      drawTimeline();
       break;
     case "ArrowRight":
-      video.currentTime = Math.min(d, video.currentTime + (e.shiftKey ? 5 : 1));
+      seekLatest(video, Math.min(d, (video._want ?? video.currentTime) + (e.shiftKey ? 5 : 1)));
+      drawTimeline();
       break;
   }
 });

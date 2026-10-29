@@ -42,6 +42,13 @@ impl Replay {
         }
     }
 
+    /// Packets with pts in [from, to], sorted by dts (all-intra streams only).
+    pub fn range(&self, from: i64, to: i64) -> Vec<Packet> {
+        let mut out: Vec<Packet> = self.packets.iter().filter(|p| p.pts >= from && p.pts <= to).cloned().collect();
+        out.sort_by_key(|p| p.dts);
+        out
+    }
+
     /// Packets for the `clip_us` before `end` (both on the recorder clock, µs),
     /// starting at a video keyframe, sorted by dts, plus the rebase timestamp.
     pub fn snapshot(&self, clip_us: i64, end: i64) -> Option<(Vec<Packet>, i64)> {

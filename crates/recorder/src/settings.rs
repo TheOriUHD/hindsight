@@ -41,6 +41,8 @@ pub struct Settings {
     pub output_dir: PathBuf,
     pub start_with_windows: bool,
     pub save_sound: bool,
+    /// Small "Clip saved" toast in the corner of the recorded screen.
+    pub save_overlay: bool,
 }
 
 impl Default for Settings {
@@ -59,6 +61,7 @@ impl Default for Settings {
             output_dir: dirs::video_dir().unwrap_or_else(|| PathBuf::from(".")).join("Hindsight"),
             start_with_windows: true,
             save_sound: true,
+            save_overlay: true,
         }
     }
 }

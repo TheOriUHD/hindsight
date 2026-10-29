@@ -5,6 +5,7 @@ mod audio;
 mod clock;
 mod feedback;
 pub mod hotkey;
+mod overlay;
 mod replay;
 mod settings;
 
@@ -61,6 +62,26 @@ pub fn list_monitors() -> Vec<MonitorInfo> {
             primary: m.primary,
         })
         .collect()
+}
+
+const SCRUB_FPS: u32 = 30;
+
+fn write_scrub(clip: &Path, packets: &[Packet], base: i64, params: &StreamParams) -> Result<()> {
+    if packets.is_empty() {
+        return Ok(());
+    }
+    let path = scrub_path(clip);
+    std::fs::create_dir_all(path.parent().unwrap())?;
+    let mut w = Mp4Writer::create(&path, &[params])?;
+    for p in packets {
+        w.write(&Packet { stream: 0, ..p.clone() }, base)?;
+    }
+    w.finish()
+}
+
+/// Where the player's scrub proxy for a clip lives.
+pub fn scrub_path(clip: &Path) -> PathBuf {
+    data_dir().join("scrub").join(clip.file_name().unwrap_or_default())
 }
 
 /// Frame slot (pts in 1/fps units) for a capture timestamp.
@@ -138,8 +159,14 @@ struct Session {
     capture: Option<Capture>,
     encoder: Option<JoinHandle<()>>,
     encoder_stop: Arc<AtomicBool>,
+    scrub_encoder: Option<JoinHandle<()>>,
     audio: Option<AudioPipeline>,
     replay: Arc<Mutex<Replay>>,
+    /// 360p all-intra copy of the video, saved next to each clip so the
+    /// player can scrub instantly.
+    scrub_replay: Arc<Mutex<Replay>>,
+    scrub_params: Option<Arc<StreamParams>>,
+    monitor_handle: isize,
     error: Arc<Mutex<Option<String>>>,
     dropped: Arc<AtomicU64>,
     params: Arc<Vec<StreamParams>>,
@@ -155,6 +182,9 @@ impl Drop for Session {
         log::info!("stopping encoder");
         self.encoder_stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.encoder.take() {
+            let _ = t.join();
+        }
+        if let Some(t) = self.scrub_encoder.take() {
             let _ = t.join();
         }
         log::info!("stopping audio");
@@ -181,6 +211,7 @@ fn open_session(s: &Settings) -> Result<Session> {
         codec: hindsight_encode::Codec::H264,
         cq: s.cq(),
         max_kbps: s.max_kbps(w, h),
+        gop: 0,
     };
     let enc = VideoEncoder::open_best(&gpu, &cfg, &s.codec_prefs())?;
     let encoder_name = enc.encoder_name.to_string();
@@ -212,12 +243,56 @@ fn open_session(s: &Settings) -> Result<Session> {
             .spawn(move || encoder_thread(enc, rx, origin, interval, margin, replay, error, stop))?
     };
 
+    // Scrub proxy: tiny H.264 stream, every frame a keyframe. Optional — if
+    // it can't open, clips still save; the player falls back to plain seeking.
+    let scrub_replay = Arc::new(Mutex::new(Replay::new(s.buffer_secs)));
+    let scrub_interval = 10_000_000.0 / SCRUB_FPS as f64;
+    let (scrub_tx, scrub_rx) = sync_channel::<(HwFrame, i64)>(2);
+    let sh = 360.min(h) & !1;
+    let scrub_cfg = EncoderConfig {
+        width: ((w as u64 * sh as u64 / h as u64) as u32) & !1,
+        height: sh,
+        fps: SCRUB_FPS,
+        codec: hindsight_encode::Codec::H264,
+        cq: 30,
+        max_kbps: 12_000,
+        gop: 1,
+    };
+    let (scrub_source, scrub_params, scrub_encoder) = match VideoEncoder::new(&gpu, scrub_cfg) {
+        Ok(senc) => {
+            let src = senc.frame_source();
+            let params = senc.params().ok().map(Arc::new);
+            let (replay, error, stop) = (scrub_replay.clone(), Arc::new(Mutex::new(None)), encoder_stop.clone());
+            let t = std::thread::Builder::new()
+                .name("scrub-encoder".into())
+                .spawn(move || encoder_thread(senc, scrub_rx, origin, scrub_interval, 2, replay, error, stop))?;
+            (Some(src), params, Some(t))
+        }
+        Err(e) => {
+            log::warn!("scrub proxy disabled: {e:#}");
+            (None, None, None)
+        }
+    };
+
     let start_capture = |backend| {
         let tx = tx.clone();
         let (error, dropped) = (error.clone(), dropped.clone());
         let mut source = source.clone();
         let mut last_slot = i64::MIN;
+        let scrub_tx = scrub_tx.clone();
+        let mut scrub_source = scrub_source.clone();
+        let mut last_scrub = i64::MIN;
         Capture::start(&gpu, &mon, backend, move |f| {
+            if let Some(src) = scrub_source.as_mut() {
+                let ss = slot_at(f.timestamp_100ns, origin, scrub_interval);
+                if ss > last_scrub || last_scrub == i64::MIN {
+                    if let Ok(frame) = src.convert(f.texture, f.width, f.height) {
+                        if scrub_tx.try_send((frame, ss)).is_ok() {
+                            last_scrub = ss;
+                        }
+                    }
+                }
+            }
             // Decimate on the capture side so frames above the target fps are
             // never converted.
             let slot = slot_at(f.timestamp_100ns, origin, interval);
@@ -251,6 +326,8 @@ fn open_session(s: &Settings) -> Result<Session> {
     };
     drop(tx);
     drop(source);
+    drop(scrub_tx);
+    drop(scrub_source);
 
     let status = Status {
         recording: true,
@@ -268,8 +345,12 @@ fn open_session(s: &Settings) -> Result<Session> {
         capture: Some(capture),
         encoder: Some(encoder),
         encoder_stop,
+        scrub_encoder,
         audio,
         replay,
+        scrub_replay,
+        scrub_params,
+        monitor_handle: mon.handle.0 as isize,
         error,
         dropped,
         params: Arc::new(params),
@@ -395,7 +476,12 @@ impl Recorder {
         let r = self.clone();
         std::thread::spawn(move || match r.save_clip() {
             Ok(p) => log::info!("saved {}", p.display()),
-            Err(e) => log::error!("save clip: {e:#}"),
+            Err(e) => {
+                log::error!("save clip: {e:#}");
+                if r.settings().save_overlay {
+                    overlay::show(overlay::Kind::Failed, &format!("{e:#}"), 0);
+                }
+            }
         });
     }
 
@@ -406,12 +492,13 @@ impl Recorder {
         // The clip ends at the key press; give the audio mixer (200 ms behind)
         // and the encoder's lookahead time to deliver that moment.
         std::thread::sleep(Duration::from_millis(300));
-        let (packets, base, params) = {
+        let (packets, base, params, scrub, monitor) = {
             let session = self.session.lock().unwrap();
-            let s = session.as_ref().context("not recording")?;
+            let s = session.as_ref().context("Recording is paused")?;
             let end = (pressed - s.origin) / 10;
-            let (packets, base) = s.replay.lock().unwrap().snapshot(s.clip_us, end).context("nothing buffered yet")?;
-            (packets, base, s.params.clone())
+            let (packets, base) = s.replay.lock().unwrap().snapshot(s.clip_us, end).context("Nothing recorded yet")?;
+            let scrub = s.scrub_params.clone().map(|p| (s.scrub_replay.lock().unwrap().range(base, end), p));
+            (packets, base, s.params.clone(), scrub, s.monitor_handle)
         };
         let settings = self.settings();
         std::fs::create_dir_all(&settings.output_dir)?;
@@ -431,6 +518,15 @@ impl Recorder {
         log::info!("clip written in {} ms", t.elapsed().as_millis());
         if settings.save_sound {
             feedback::play_chime();
+        }
+        if settings.save_overlay {
+            let secs = packets.iter().filter(|p| p.stream == 0).map(|p| p.pts).max().map(|e| (e - base) as f64 / 1e6).unwrap_or(0.0);
+            overlay::show(overlay::Kind::Saved, &format!("{} · {:.0}s", title, secs), monitor);
+        }
+        if let Some((sp, params)) = scrub {
+            if let Err(e) = write_scrub(&path, &sp, base, &params) {
+                log::warn!("scrub proxy: {e:#}");
+            }
         }
         *self.last_clip.lock().unwrap() = Some(path.clone());
         (self.on_clip)(&path);

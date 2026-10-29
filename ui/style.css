@@ -151,6 +151,9 @@ select:focus, .title-edit:focus { outline: 2px solid rgba(255,77,90,.5); outline
 .title-edit:hover { border-color: var(--line); }
 .video-wrap { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; aspect-ratio: 16/9; max-height: 68vh; }
 video { width: 100%; height: 100%; display: block; background: #000; }
+/* Low-res all-keyframe proxy shown while dragging, so scrubbing is instant. */
+video.scrub { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+video.scrub.on { opacity: 1; }
 .video-error { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted); }
 .timeline { display: flex; align-items: center; gap: 12px; }
 .time { font: 12.5px "Cascadia Mono", Consolas, monospace; color: var(--muted); min-width: 64px; text-align: center; }

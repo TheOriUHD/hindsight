@@ -59,7 +59,8 @@ Clipping tools tend to grow accounts, feeds, cloud uploads and an Electron windo
 - **Confirmation without injection**: a short chime and a small card that slides out of the screen edge. The card is hidden from capture, so it never ends up in a later clip.
 - **Up to 240 fps** at native resolution, or downscaled to 1440p, 1080p or 720p.
 - **Clip length** from 15 seconds to 5 minutes, kept in memory.
-- **Audio** from your speakers, your microphone, or both: clips then carry a mixed track plus separate desktop and mic tracks for editing.
+- **Audio sources**: everything on an output device, or only the apps you pick (the game without Discord or music), plus a microphone. Choose the devices, and keep each source on its own track next to the mix.
+- **Tray popout**: click the tray icon for status, save, pause and the settings you change most.
 
 </td>
 </tr>
@@ -73,7 +74,7 @@ Clipping tools tend to grow accounts, feeds, cloud uploads and an Electron windo
 
 - **Instant scrubbing**: each clip carries a small all-keyframe preview, so dragging the timeline shows every frame as you move.
 - **Trim** with handles or `I` / `O`. A trimmed copy saves instantly by cutting on keyframes, or frame-accurately with a GPU re-encode.
-- **Export to a size**: 10 MB for Discord, or 25 to 500 MB, as H.264 that plays everywhere.
+- **Export presets** for where it's going: Discord (20 MB), Nitro Basic (50 MB), Nitro (1 GB), WhatsApp, email, X, or any size. The export picks the resolution and frame rate the size can carry, and AV1 is one click away when the other side can play it.
 - **Library**: grouped by day, filtered by game, hover a thumbnail to skim it.
 
 </td>

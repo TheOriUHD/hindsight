@@ -45,6 +45,13 @@ pub fn focus_process_window(pid: u32) {
     }
 }
 
+pub fn foreground_is_this_process() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid)) };
+    pid == std::process::id()
+}
+
 /// Let whichever process we start next take the foreground (it may only do so
 /// if we currently own it, e.g. right after a tray click).
 pub fn allow_foreground() {

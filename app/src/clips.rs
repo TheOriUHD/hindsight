@@ -337,7 +337,8 @@ pub fn export(
     };
 
     let dst = sibling(src, label);
-    let limit_bytes = target_mb.map(|mb| mb * 1_000_000.0);
+    // Re-encode anything within 2% of the limit; AV1 rate control overshoots more.
+    let limit_bytes = target_mb.map(|mb| mb * 1_000_000.0 * 0.98);
     for attempt in 0..3 {
         let mut args: Vec<String> = vec![
             "-hwaccel".into(), "auto".into(),

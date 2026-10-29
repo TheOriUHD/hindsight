@@ -215,7 +215,7 @@ fn close_popout(handle: AppHandle) {
 }
 
 const POPOUT_W: f64 = 340.0;
-const POPOUT_H: f64 = 486.0;
+const POPOUT_H: f64 = 430.0;
 
 /// Place the popout above the tray icon, inside the work area of its monitor.
 fn place_popout(window: &tauri::WebviewWindow, x: f64, y: f64) -> tauri::Result<()> {
@@ -268,16 +268,25 @@ pub fn run(mode: Mode) {
                         .theme(Some(tauri::Theme::Dark))
                         .build()?;
                     place_popout(&w, x, y)?;
-                    // Like a Windows flyout: gone as soon as focus moves elsewhere.
-                    let was_focused = std::sync::atomic::AtomicBool::new(false);
+                    // Like a Windows flyout: gone once another app takes the
+                    // foreground. Focus also bounces between the window and its
+                    // webview while it appears, so check after a moment who
+                    // actually has it instead of trusting a single blur.
+                    // (HINDSIGHT_POPOUT_PERSIST=1 keeps it open for debugging.)
                     let h = handle.clone();
+                    let persist = std::env::var_os("HINDSIGHT_POPOUT_PERSIST").is_some();
                     w.on_window_event(move |ev| {
-                        if let tauri::WindowEvent::Focused(f) = ev {
-                            if *f {
-                                was_focused.store(true, std::sync::atomic::Ordering::Relaxed);
-                            } else if was_focused.load(std::sync::atomic::Ordering::Relaxed) {
-                                h.exit(0);
+                        if let tauri::WindowEvent::Focused(false) = ev {
+                            if persist {
+                                return;
                             }
+                            let h = h.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(150));
+                                if !system::foreground_is_this_process() {
+                                    h.exit(0);
+                                }
+                            });
                         }
                     });
                 }

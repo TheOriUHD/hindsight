@@ -45,6 +45,31 @@ pub fn focus_process_window(pid: u32) {
     }
 }
 
+/// Put this process in a job object that kills everything it started when
+/// it exits, so closing the window mid-export doesn't leave ffmpeg running.
+pub fn kill_children_on_exit() {
+    use windows::Win32::System::JobObjects::*;
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    unsafe {
+        let Ok(job) = CreateJobObjectW(None, None) else { return };
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let ok = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+        .is_ok()
+            && AssignProcessToJobObject(job, GetCurrentProcess()).is_ok();
+        if !ok {
+            log::warn!("couldn't set up job object; child processes may outlive the window");
+        }
+        // `job` is deliberately never closed: Windows closes it when this
+        // process exits, and that is what kills the children.
+    }
+}
+
 /// Bring `hwnd` to the foreground even when Windows' foreground lock would
 /// refuse it, by briefly attaching to the input queue of the current
 /// foreground thread.

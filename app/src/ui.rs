@@ -114,6 +114,11 @@ async fn filmstrip(path: PathBuf) -> Option<PathBuf> {
 }
 
 #[tauri::command]
+fn cancel_job() {
+    clips::cancel_job();
+}
+
+#[tauri::command]
 fn app_version(handle: AppHandle) -> String {
     handle.package_info().version.to_string()
 }
@@ -256,6 +261,8 @@ fn place_popout(window: &tauri::WebviewWindow, x: f64, y: f64) -> tauri::Result<
 }
 
 pub fn run(mode: Mode) {
+    // ffmpeg jobs (exports, thumbnails, scrub proxies) end with this process.
+    system::kill_children_on_exit();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
@@ -338,6 +345,7 @@ pub fn run(mode: Mode) {
             audio_devices,
             audio_apps,
             open_full_app,
+            cancel_job,
             popout_ready,
             close_popout,
             rename_clip,

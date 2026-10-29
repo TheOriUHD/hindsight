@@ -44,9 +44,10 @@ const icon = (name) => `<svg class="ic"><use href="#i-${name}"/></svg>`;
 
 /* ---------- toast ---------- */
 let toastTimer;
-function toast(text, { error = false, progress = null, sticky = false } = {}) {
+function toast(text, { error = false, progress = null, sticky = false, cancel = false } = {}) {
   const t = $("#toast");
   $("#toast-text").textContent = text;
+  $("#toast-cancel").hidden = !cancel;
   t.hidden = false;
   t.classList.toggle("error", error);
   t.classList.toggle("progress", progress != null);
@@ -540,20 +541,30 @@ async function runJob(label, cmd, args) {
   if (busy || !cur) return;
   busy = true;
   document.querySelectorAll("#p-trim, #p-export").forEach((b) => (b.disabled = true));
-  toast(`${label}…`, { progress: 0, sticky: true });
+  toast(`${label}…`, { progress: 0, sticky: true, cancel: true });
   try {
     const out = await invoke(cmd, args);
     toast(`${label} saved`);
     loadClips(out);
   } catch (e) {
-    toast(`${label} failed: ${e}`, { error: true });
+    if (String(e) === "Cancelled") toast(`${label} cancelled`);
+    else toast(`${label} failed: ${e}`, { error: true });
   }
   busy = false;
   document.querySelectorAll("#p-trim, #p-export").forEach((b) => (b.disabled = false));
 }
 listen("progress", (e) => {
-  if (busy) toast(`${e.payload.job === "export" ? "Exporting" : "Trimming"}… ${Math.round(e.payload.pct * 100)}%`, { progress: e.payload.pct, sticky: true });
+  if (busy && !cancelling) toast(`${e.payload.job === "export" ? "Exporting" : "Trimming"}… ${Math.round(e.payload.pct * 100)}%`, { progress: e.payload.pct, sticky: true, cancel: true });
 });
+let cancelling = false;
+$("#toast-cancel").onclick = async () => {
+  cancelling = true;
+  $("#toast-cancel").disabled = true;
+  $("#toast-text").textContent = "Cancelling…";
+  await invoke("cancel_job").catch(() => {});
+  cancelling = false;
+  $("#toast-cancel").disabled = false;
+};
 
 $("#p-trim").onclick = () => runJob("Selection", "trim_clip", { path: cur.path, start: trim.start, end: trim.end, exact: $("#p-exact").checked });
 /* Export presets. Limits as of October 2026: Discord free 20 MB (raised from

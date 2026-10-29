@@ -196,7 +196,32 @@ fn probe_codec(src: &Path) -> Option<String> {
 }
 
 /// Run ffmpeg reporting progress 0..1 over `duration` seconds.
+/* ---------- cancellation ----------
+ * One trim/export runs at a time. Cancelling kills its ffmpeg; the job then
+ * fails with CANCELLED and removes its partial output. */
+pub const CANCELLED: &str = "Cancelled";
+static CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static RUNNING_PID: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
+
+fn begin_job() {
+    CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn cancelled() -> bool {
+    CANCEL.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub fn cancel_job() {
+    CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
+    if let Some(pid) = *RUNNING_PID.lock().unwrap() {
+        let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).creation_flags(CREATE_NO_WINDOW).status();
+    }
+}
+
 fn run_ffmpeg(args: &[String], duration: f64, progress: &dyn Fn(f64)) -> Result<()> {
+    if cancelled() {
+        bail!(CANCELLED);
+    }
     let mut child = Command::new(ffmpeg_exe())
         .args(["-hide_banner", "-v", "error", "-y", "-nostats", "-progress", "pipe:1"])
         .args(args)
@@ -205,6 +230,7 @@ fn run_ffmpeg(args: &[String], duration: f64, progress: &dyn Fn(f64)) -> Result<
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .context("starting ffmpeg")?;
+    *RUNNING_PID.lock().unwrap() = Some(child.id());
     let stdout = child.stdout.take().unwrap();
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
         if let Some(us) = line.strip_prefix("out_time_us=").and_then(|v| v.parse::<f64>().ok()) {
@@ -213,7 +239,12 @@ fn run_ffmpeg(args: &[String], duration: f64, progress: &dyn Fn(f64)) -> Result<
             }
         }
     }
-    let out = child.wait_with_output()?;
+    let out = child.wait_with_output();
+    *RUNNING_PID.lock().unwrap() = None;
+    if cancelled() {
+        bail!(CANCELLED);
+    }
+    let out = out?;
     if !out.status.success() {
         bail!("ffmpeg failed: {}", String::from_utf8_lossy(&out.stderr).trim());
     }
@@ -229,6 +260,7 @@ fn source_kbps(src: &Path) -> f64 {
 
 /// Lossless trim: cuts on keyframes, instant. Exact: frame-accurate re-encode on the GPU.
 pub fn trim(src: &Path, start: f64, end: f64, exact: bool, recording_encoder: &str, progress: &dyn Fn(f64)) -> Result<PathBuf> {
+    begin_job();
     let dst = sibling(src, "trim");
     let dur = (end - start).max(0.1);
     let mut args: Vec<String> = Vec::new();
@@ -246,7 +278,10 @@ pub fn trim(src: &Path, start: f64, end: f64, exact: bool, recording_encoder: &s
         args.extend(["-avoid_negative_ts".into(), "make_zero".into()]);
     }
     args.extend(["-movflags".into(), "+faststart".into(), dst.to_string_lossy().into()]);
-    run_ffmpeg(&args, dur, progress)?;
+    if let Err(e) = run_ffmpeg(&args, dur, progress) {
+        let _ = std::fs::remove_file(&dst);
+        return Err(e);
+    }
     Ok(dst)
 }
 
@@ -297,6 +332,7 @@ pub fn export(
     recording_encoder: &str,
     progress: &dyn Fn(f64),
 ) -> Result<PathBuf> {
+    begin_job();
     let dur = (end - start).max(0.1);
     let (_, src_h, src_fps) = probe_video(src);
     let src_fps = src_fps.max(1.0);
@@ -367,13 +403,20 @@ pub fn export(
         args.extend(["-movflags".into(), "+faststart".into(), dst.to_string_lossy().into()]);
         match run_ffmpeg(&args, dur, progress) {
             Ok(()) => {}
+            Err(e) if cancelled() => {
+                let _ = std::fs::remove_file(&dst);
+                return Err(e);
+            }
             // No hardware AV1 on this GPU: fall back to H.264 once.
             Err(e) if codec == ExportCodec::Av1 && attempt == 0 => {
                 log::warn!("AV1 export failed ({e:#}), using H.264");
                 let _ = std::fs::remove_file(&dst);
                 return export(src, start, end, target_mb, ExportCodec::H264, label, recording_encoder, progress);
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                let _ = std::fs::remove_file(&dst);
+                return Err(e);
+            }
         }
         let size = std::fs::metadata(&dst).map(|m| m.len() as f64).unwrap_or(0.0);
         match limit_bytes {

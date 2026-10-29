@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+serde.workspace = true
 ffmpeg-sys-next.workspace = true
 hindsight-capture = { path = "../capture" }
 windows = { workspace = true, features = [

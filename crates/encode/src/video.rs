@@ -39,7 +39,6 @@ pub struct VideoEncoder {
     last: *mut ff::AVFrame,
     has_last: bool,
     pkt: *mut ff::AVPacket,
-    converter: Option<Converter>,
     gpu: GpuDevice,
     cfg: EncoderConfig,
     pub encoder_name: &'static str,
@@ -87,7 +86,6 @@ impl VideoEncoder {
                 last: ff::av_frame_alloc(),
                 has_last: false,
                 pkt: ff::av_packet_alloc(),
-                converter: None,
                 gpu: gpu.clone(),
                 cfg: cfg.clone(),
                 encoder_name: name,
@@ -137,9 +135,21 @@ impl VideoEncoder {
             c.flags |= ff::AV_CODEC_FLAG_GLOBAL_HEADER as i32;
             c.hw_frames_ctx = ff::av_buffer_ref(enc.frames_ref);
 
+            // Pixels per second decides how much encoder effort fits in real time
+            // (p5 handles ~4K60; 4K240 needs p1).
+            let pixel_rate = cfg.width as f64 * cfg.height as f64 * cfg.fps as f64;
+            let preset = if pixel_rate <= 5.5e8 {
+                "p5"
+            } else if pixel_rate <= 1.1e9 {
+                "p3"
+            } else if pixel_rate <= 1.5e9 {
+                "p2"
+            } else {
+                "p1"
+            };
             let opts: Vec<(&str, String)> = if name.ends_with("_nvenc") {
                 vec![
-                    ("preset", "p5".into()),
+                    ("preset", preset.into()),
                     ("tune", "hq".into()),
                     ("rc", "vbr".into()),
                     ("cq", cfg.cq.to_string()),
@@ -186,23 +196,24 @@ impl VideoEncoder {
         self.has_last
     }
 
-    /// Convert + encode one captured texture as frame `slot`.
-    pub fn encode(&mut self, src: &ID3D11Texture2D, src_w: u32, src_h: u32, slot: i64, out: &mut dyn FnMut(Packet)) -> Result<()> {
-        unsafe {
-            if self.converter.as_ref().map(|c| c.input_size()) != Some((src_w, src_h)) {
-                self.converter = Some(Converter::new(
-                    &self.gpu.device, &self.gpu.context, src_w, src_h, self.cfg.width, self.cfg.height, self.cfg.fps,
-                )?);
-            }
-            check(ff::av_hwframe_get_buffer(self.frames_ref, self.frame, 0), "av_hwframe_get_buffer")?;
-            let raw = (*self.frame).data[0] as *mut c_void;
-            let index = (*self.frame).data[1] as usize as u32;
-            let dst = ID3D11Texture2D::from_raw_borrowed(&raw).context("null hw frame texture")?;
-            self.converter.as_mut().unwrap().convert(src, dst, index)?;
+    /// A converter that turns capture textures into encoder-ready frames. Lives
+    /// on the capture thread so the encoder thread never shares a lock with it.
+    pub fn frame_source(&self) -> FrameSource {
+        FrameSource {
+            frames_ref: unsafe { ff::av_buffer_ref(self.frames_ref) },
+            gpu: self.gpu.clone(),
+            cfg: self.cfg.clone(),
+            converter: None,
+        }
+    }
 
+    /// Encode a converted frame as frame `slot`.
+    pub fn encode(&mut self, frame: HwFrame, slot: i64, out: &mut dyn FnMut(Packet)) -> Result<()> {
+        unsafe {
             ff::av_frame_unref(self.last);
-            ff::av_frame_ref(self.last, self.frame);
+            ff::av_frame_ref(self.last, frame.0);
             self.has_last = true;
+            ff::av_frame_move_ref(self.frame, frame.0);
             self.send(slot, out)
         }
     }
@@ -231,6 +242,64 @@ impl VideoEncoder {
             ff::avcodec_send_frame(self.ctx, ptr::null());
             drain(self.ctx, self.pkt, out)
         }
+    }
+}
+
+/// An NV12 D3D11 frame from the encoder's pool, ready for `VideoEncoder::encode`.
+pub struct HwFrame(*mut ff::AVFrame);
+
+unsafe impl Send for HwFrame {}
+
+impl Drop for HwFrame {
+    fn drop(&mut self) {
+        unsafe { ff::av_frame_free(&mut self.0) }
+    }
+}
+
+pub struct FrameSource {
+    frames_ref: *mut ff::AVBufferRef,
+    gpu: GpuDevice,
+    cfg: EncoderConfig,
+    converter: Option<Converter>,
+}
+
+unsafe impl Send for FrameSource {}
+
+impl Clone for FrameSource {
+    fn clone(&self) -> Self {
+        Self {
+            frames_ref: unsafe { ff::av_buffer_ref(self.frames_ref) },
+            gpu: self.gpu.clone(),
+            cfg: self.cfg.clone(),
+            converter: None,
+        }
+    }
+}
+
+impl FrameSource {
+    /// GPU-convert (BGRA -> NV12, scaled to the encoder size) one captured texture.
+    pub fn convert(&mut self, src: &ID3D11Texture2D, src_w: u32, src_h: u32) -> Result<HwFrame> {
+        unsafe {
+            if self.converter.as_ref().map(|c| c.input_size()) != Some((src_w, src_h)) {
+                self.converter = Some(Converter::new(
+                    &self.gpu.device, &self.gpu.context, src_w, src_h, self.cfg.width, self.cfg.height, self.cfg.fps,
+                )?);
+            }
+            let frame = HwFrame(ff::av_frame_alloc());
+            check(ff::av_hwframe_get_buffer(self.frames_ref, frame.0, 0), "av_hwframe_get_buffer")?;
+            let raw = (*frame.0).data[0] as *mut c_void;
+            let index = (*frame.0).data[1] as usize as u32;
+            let dst = ID3D11Texture2D::from_raw_borrowed(&raw).context("null hw frame texture")?;
+            self.converter.as_mut().unwrap().convert(src, dst, index)?;
+            Ok(frame)
+        }
+    }
+}
+
+impl Drop for FrameSource {
+    fn drop(&mut self) {
+        self.converter = None;
+        unsafe { ff::av_buffer_unref(&mut self.frames_ref) }
     }
 }
 

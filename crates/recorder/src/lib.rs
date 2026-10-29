@@ -1,4 +1,4 @@
-//! The always-on recorder: capture -> CFR hardware encode + audio -> replay
+﻿//! The always-on recorder: capture -> CFR hardware encode + audio -> replay
 //! buffer -> clip on hotkey.
 
 mod audio;
@@ -9,14 +9,15 @@ mod replay;
 mod settings;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use hindsight_capture::{monitors, Backend, Capture, Frame, GpuDevice};
-use hindsight_encode::{EncoderConfig, Mp4Writer, Packet, StreamParams, VideoEncoder};
+use hindsight_capture::{monitors, Backend, Capture, GpuDevice};
+use hindsight_encode::{EncoderConfig, HwFrame, Mp4Writer, Packet, StreamParams, VideoEncoder};
 use serde::Serialize;
 
 pub use settings::{data_dir, CodecChoice, Quality, Settings};
@@ -38,6 +39,7 @@ pub struct Status {
     pub buffered_secs: f64,
     pub buffer_mb: f64,
     pub audio_tracks: Vec<String>,
+    pub dropped_frames: u64,
     pub last_clip: Option<PathBuf>,
 }
 
@@ -54,84 +56,92 @@ pub fn list_monitors() -> Vec<MonitorInfo> {
         .into_iter()
         .enumerate()
         .map(|(i, m)| MonitorInfo {
-            label: format!("Display {} — {}×{}{}", i + 1, m.width, m.height, if m.primary { " (primary)" } else { "" }),
+            label: format!("Display {} â€” {}Ã—{}{}", i + 1, m.width, m.height, if m.primary { " (primary)" } else { "" }),
             id: m.name,
             primary: m.primary,
         })
         .collect()
 }
 
-struct VideoState {
-    enc: VideoEncoder,
-    origin: i64,
-    interval: f64,
-    next_slot: i64,
-    margin_slots: i64,
-    replay: Arc<Mutex<Replay>>,
-    error: Option<String>,
+/// Frame slot (pts in 1/fps units) for a capture timestamp.
+fn slot_at(t_100ns: i64, origin: i64, interval: f64) -> i64 {
+    ((t_100ns - origin) as f64 / interval).floor() as i64
 }
 
-impl VideoState {
-    fn slot_at(&self, t_100ns: i64) -> i64 {
-        ((t_100ns - self.origin) as f64 / self.interval).floor() as i64
-    }
-
-    fn on_frame(&mut self, f: Frame) {
-        let mut slot = self.slot_at(f.timestamp_100ns);
-        if !self.enc.has_frame() {
-            // First frame may carry an old present time (static desktop).
-            slot = slot.max(self.next_slot);
+/// Owns the encoder. Receives converted frames from the capture thread over a
+/// bounded channel and fills gaps (static screen) by repeating the last frame,
+/// producing constant frame rate. No lock is shared with the capture thread:
+/// both talk to the GPU driver, and sharing one deadlocked at high fps.
+fn encoder_thread(
+    mut enc: VideoEncoder,
+    rx: Receiver<(HwFrame, i64)>,
+    origin: i64,
+    interval: f64,
+    margin_slots: i64,
+    replay: Arc<Mutex<Replay>>,
+    error: Arc<Mutex<Option<String>>>,
+    stop: Arc<AtomicBool>,
+) {
+    let mut next_slot = 0i64;
+    let mut out: Vec<Packet> = Vec::new();
+    let fail = |e: anyhow::Error| {
+        let mut err = error.lock().unwrap();
+        if err.is_none() {
+            log::error!("video encode: {e:#}");
         }
-        if slot < self.next_slot {
-            return; // display runs faster than the target fps
-        }
-        let mut out = Vec::new();
-        let r = self.fill(slot, &mut out).and_then(|_| {
-            self.enc.encode(f.texture, f.width, f.height, slot, &mut |p| out.push(p))
-        });
-        self.next_slot = slot + 1;
-        self.finish(r, out);
-    }
-
-    /// Repeat the last frame for every slot before `upto` that got no new frame.
-    fn fill(&mut self, upto: i64, out: &mut Vec<Packet>) -> Result<()> {
-        while self.next_slot < upto && self.enc.has_frame() {
-            self.enc.repeat(self.next_slot, &mut |p| out.push(p))?;
-            self.next_slot += 1;
-        }
-        Ok(())
-    }
-
-    fn tick(&mut self) {
-        let upto = self.slot_at(now_100ns()) - self.margin_slots;
-        let mut out = Vec::new();
-        let r = self.fill(upto, &mut out);
-        self.finish(r, out);
-    }
-
-    fn finish(&mut self, r: Result<()>, out: Vec<Packet>) {
-        if let Err(e) = r {
-            if self.error.is_none() {
-                log::error!("video encode: {e:#}");
+        *err = Some(format!("{e:#}"));
+    };
+    while !stop.load(Ordering::Relaxed) {
+        let msg = rx.recv_timeout(Duration::from_millis(20));
+        let r = (|| -> Result<()> {
+            match msg {
+                Ok((frame, mut slot)) => {
+                    if !enc.has_frame() {
+                        // First frame may carry an old present time (static desktop).
+                        slot = slot.max(next_slot);
+                    }
+                    if slot >= next_slot {
+                        while next_slot < slot && enc.has_frame() {
+                            enc.repeat(next_slot, &mut |p| out.push(p))?;
+                            next_slot += 1;
+                        }
+                        enc.encode(frame, slot, &mut |p| out.push(p))?;
+                        next_slot = slot + 1;
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return Err(anyhow::anyhow!("stop")),
             }
-            self.error = Some(format!("{e:#}"));
-        }
+            // Screen unchanged for a while: keep the timeline moving.
+            let upto = slot_at(now_100ns(), origin, interval) - margin_slots;
+            while next_slot < upto && enc.has_frame() {
+                enc.repeat(next_slot, &mut |p| out.push(p))?;
+                next_slot += 1;
+            }
+            Ok(())
+        })();
         if !out.is_empty() {
-            let mut replay = self.replay.lock().unwrap();
-            for p in out {
+            let mut replay = replay.lock().unwrap();
+            for p in out.drain(..) {
                 replay.push(p);
             }
+        }
+        match r {
+            Ok(()) => {}
+            Err(e) if e.to_string() == "stop" => break,
+            Err(e) => fail(e),
         }
     }
 }
 
 struct Session {
     capture: Option<Capture>,
-    pacer_stop: Arc<AtomicBool>,
-    pacer: Option<JoinHandle<()>>,
+    encoder: Option<JoinHandle<()>>,
+    encoder_stop: Arc<AtomicBool>,
     audio: Option<AudioPipeline>,
-    video: Arc<Mutex<VideoState>>,
     replay: Arc<Mutex<Replay>>,
+    error: Arc<Mutex<Option<String>>>,
+    dropped: Arc<AtomicU64>,
     params: Arc<Vec<StreamParams>>,
     status: Status,
     clip_us: i64,
@@ -140,12 +150,11 @@ struct Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // Stop capture callbacks first, then the pacer, so nothing touches the
-        // encoder while it is torn down.
         log::info!("stopping capture");
         drop(self.capture.take());
-        self.pacer_stop.store(true, Ordering::Relaxed);
-        if let Some(t) = self.pacer.take() {
+        log::info!("stopping encoder");
+        self.encoder_stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.encoder.take() {
             let _ = t.join();
         }
         log::info!("stopping audio");
@@ -187,19 +196,51 @@ fn open_session(s: &Settings) -> Result<Session> {
         None
     };
 
-    let video = Arc::new(Mutex::new(VideoState {
-        enc,
-        origin,
-        interval: 10_000_000.0 / s.fps as f64,
-        next_slot: 0,
-        margin_slots: ((s.fps as f64 * 0.03).ceil() as i64).max(2),
-        replay: replay.clone(),
-        error: None,
-    }));
+    let interval = 10_000_000.0 / s.fps as f64;
+    let error = Arc::new(Mutex::new(None));
+    let dropped = Arc::new(AtomicU64::new(0));
+    // A few frames of slack; if the encoder falls behind, capture drops frames
+    // instead of stalling (the gap is filled by repeats).
+    let (tx, rx) = sync_channel::<(HwFrame, i64)>(4);
+    let source = enc.frame_source();
+    let encoder_stop = Arc::new(AtomicBool::new(false));
+    let encoder = {
+        let (replay, error, stop) = (replay.clone(), error.clone(), encoder_stop.clone());
+        let margin = ((s.fps as f64 * 0.03).ceil() as i64).max(2);
+        std::thread::Builder::new()
+            .name("video-encoder".into())
+            .spawn(move || encoder_thread(enc, rx, origin, interval, margin, replay, error, stop))?
+    };
 
     let start_capture = |backend| {
-        let v = video.clone();
-        Capture::start(&gpu, &mon, backend, move |f| v.lock().unwrap().on_frame(f))
+        let tx = tx.clone();
+        let (error, dropped) = (error.clone(), dropped.clone());
+        let mut source = source.clone();
+        let mut last_slot = i64::MIN;
+        Capture::start(&gpu, &mon, backend, move |f| {
+            // Decimate on the capture side so frames above the target fps are
+            // never converted.
+            let slot = slot_at(f.timestamp_100ns, origin, interval);
+            if slot <= last_slot && last_slot != i64::MIN {
+                return;
+            }
+            match source.convert(f.texture, f.width, f.height) {
+                Ok(frame) => {
+                    if tx.try_send((frame, slot)).is_ok() {
+                        last_slot = slot;
+                    } else {
+                        dropped.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                Err(e) => {
+                    let mut err = error.lock().unwrap();
+                    if err.is_none() {
+                        log::error!("convert: {e:#}");
+                    }
+                    *err = Some(format!("{e:#}"));
+                }
+            }
+        })
     };
     let capture = match start_capture(Backend::auto()) {
         Ok(c) => c,
@@ -208,15 +249,8 @@ fn open_session(s: &Settings) -> Result<Session> {
             start_capture(Backend::Dxgi)?
         }
     };
-
-    let pacer_stop = Arc::new(AtomicBool::new(false));
-    let (ps, v) = (pacer_stop.clone(), video.clone());
-    let pacer = std::thread::Builder::new().name("video-pacer".into()).spawn(move || {
-        while !ps.load(Ordering::Relaxed) {
-            std::thread::sleep(Duration::from_millis(20));
-            v.lock().unwrap().tick();
-        }
-    })?;
+    drop(tx);
+    drop(source);
 
     let status = Status {
         recording: true,
@@ -232,11 +266,12 @@ fn open_session(s: &Settings) -> Result<Session> {
     log::info!("recording {} {}x{}@{} via {} on {}", mon.name, w, h, s.fps, status.encoder, gpu.adapter_name);
     Ok(Session {
         capture: Some(capture),
-        pacer_stop,
-        pacer: Some(pacer),
+        encoder: Some(encoder),
+        encoder_stop,
         audio,
-        video,
         replay,
+        error,
+        dropped,
         params: Arc::new(params),
         status,
         clip_us: s.buffer_secs as i64 * 1_000_000,
@@ -345,7 +380,8 @@ impl Recorder {
                 let r = s.replay.lock().unwrap();
                 st.buffered_secs = r.span_secs().min(s.clip_us as f64 / 1e6);
                 st.buffer_mb = r.bytes() as f64 / 1e6;
-                st.error = s.video.lock().unwrap().error.clone();
+                st.error = s.error.lock().unwrap().clone();
+                st.dropped_frames = s.dropped.load(Ordering::Relaxed);
                 st
             }
             None => Status { error: self.error.lock().unwrap().clone(), ..Default::default() },

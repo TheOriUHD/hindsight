@@ -74,11 +74,17 @@ fn chrono_like_now() -> String {
     format!("{}.{:03}", d.as_secs(), d.subsec_millis())
 }
 
-/// Log to <data dir>\hindsight.log (or hindsight-ui.log), fresh each launch.
+/// Log to <data dir>\hindsight.log (or hindsight-ui.log). Appends, because a
+/// second launch briefly runs before handing off to the running instance and
+/// must not clobber its log; rotates once the file passes 2 MB.
 pub fn init_logging(ui: bool) {
     let dir = hindsight_recorder::data_dir();
     let _ = std::fs::create_dir_all(&dir);
-    if let Ok(f) = std::fs::File::create(dir.join(if ui { "hindsight-ui.log" } else { "hindsight.log" })) {
+    let path = dir.join(if ui { "hindsight-ui.log" } else { "hindsight.log" });
+    if std::fs::metadata(&path).map(|m| m.len() > 2_000_000).unwrap_or(false) {
+        let _ = std::fs::rename(&path, path.with_extension("old.log"));
+    }
+    if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = log::set_boxed_logger(Box::new(FileLogger(Mutex::new(f))));
         log::set_max_level(log::LevelFilter::Info);
     }

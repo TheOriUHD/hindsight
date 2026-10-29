@@ -17,7 +17,7 @@ use ffmpeg_sys_next as ff;
 pub use audio::{AudioEncoder, CHANNELS, SAMPLE_RATE};
 pub use convert::Converter;
 pub use mux::{probe_duration, Mp4Writer};
-pub use video::{Codec, EncoderConfig, VideoEncoder};
+pub use video::{Codec, EncoderConfig, FrameSource, HwFrame, VideoEncoder};
 
 /// Microseconds; the common time base for packets in the replay buffer.
 pub const US: ff::AVRational = ff::AVRational { num: 1, den: 1_000_000 };

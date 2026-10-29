@@ -21,6 +21,7 @@ pub fn supports_uncapped() -> bool {
 pub struct WgcCapture {
     session: GraphicsCaptureSession,
     pool: Direct3D11CaptureFramePool,
+    token: i64,
 }
 
 impl WgcCapture {
@@ -42,7 +43,7 @@ impl WgcCapture {
         // Without this WGC throttles to ~60 fps.
         let _ = session.SetMinUpdateInterval(TimeSpan { Duration: 10_000 });
 
-        pool.FrameArrived(&TypedEventHandler::new(
+        let token = pool.FrameArrived(&TypedEventHandler::new(
             move |pool: windows_core::Ref<Direct3D11CaptureFramePool>, _| {
                 let Some(pool) = pool.as_ref() else { return Ok(()) };
                 let frame = pool.TryGetNextFrame()?;
@@ -60,12 +61,14 @@ impl WgcCapture {
         ))?;
 
         session.StartCapture()?;
-        Ok(Self { session, pool })
+        Ok(Self { session, pool, token })
     }
 }
 
 impl Drop for WgcCapture {
     fn drop(&mut self) {
+        // Unregister first so the handler (and everything it owns) is released.
+        let _ = self.pool.RemoveFrameArrived(self.token);
         let _ = self.session.Close();
         let _ = self.pool.Close();
     }

@@ -86,7 +86,7 @@ async function refreshStatus() {
   let text;
   if (status.error && status.error.includes("isn't running")) text = "Recorder not running — start Hindsight from the Start menu";
   else if (status.error) text = `Not recording — ${status.error}`;
-  else if (!enabled) text = "Paused";
+  else if (!enabled) text = "Recording paused — hotkey is off until you resume";
   else if (!status.recording) text = "Starting…";
   else {
     const tracks = status.audio_tracks.length ? ` · ${status.audio_tracks.length} audio` : " · no audio";
@@ -94,7 +94,8 @@ async function refreshStatus() {
   }
   $("#status-text").textContent = text;
   s.title = status.error || text;
-  $("#toggle-rec").textContent = enabled ? "Pause" : "Resume";
+  $("#toggle-rec").textContent = enabled ? "Pause recording" : "Resume recording";
+  $("#toggle-rec").classList.toggle("primary", !enabled);
   $("#save-clip").disabled = !status.recording;
 }
 setInterval(() => !document.hidden && refreshStatus(), 1000);

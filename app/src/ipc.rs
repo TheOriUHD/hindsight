@@ -107,7 +107,25 @@ fn connect() -> Result<File> {
     bail!("recorder busy")
 }
 
+/// Request with a deadline: the UI must never hang on a stuck recorder.
 pub fn call<T: for<'de> Deserialize<'de>>(req: &Request) -> Result<T> {
+    let msg = serde_json::to_string(req)?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(call_blocking(&msg));
+    });
+    let v = rx
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|_| anyhow::anyhow!("the recorder isn't responding — try Quit and restart Hindsight from the tray"))??;
+    Ok(serde_json::from_value(v)?)
+}
+
+fn call_blocking(msg: &str) -> Result<Value> {
+    let req: Request = serde_json::from_str(msg)?;
+    call_raw(&req)
+}
+
+fn call_raw(req: &Request) -> Result<Value> {
     let mut f = connect()?;
     let mut msg = serde_json::to_vec(req)?;
     msg.push(b'\n');

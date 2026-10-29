@@ -227,9 +227,13 @@ video.scrub.on { visibility: visible; }
 .check span { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--line-2); background: var(--raised); display: grid; place-items: center; }
 .check input:checked + span { background: var(--text); border-color: var(--text); }
 .check input:checked + span::after { content: ""; width: 8px; height: 4px; border: 2px solid var(--bg); border-top: 0; border-right: 0; transform: translateY(-1px) rotate(-45deg); }
-.split { display: flex; }
-.split select { min-width: 0; width: 96px; border-radius: var(--radius) 0 0 var(--radius); border-right: 0; }
-.split .btn { border-radius: 0 var(--radius) var(--radius) 0; }
+.export { display: flex; align-items: center; gap: 6px; }
+.export select { min-width: 0; }
+#p-preset { width: 196px; }
+#p-codec { width: 82px; }
+#p-custom-mb { width: 84px; height: 30px; padding: 0 8px; border-radius: var(--radius); border: 1px solid var(--line-2); background: var(--raised); font-variant-numeric: tabular-nums; }
+#p-export-hint { margin-right: 4px; white-space: nowrap; }
+#p-export-hint.warn { color: var(--warn); }
 .keys { display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--text-3); font-size: 12px; margin: 14px 0 16px; }
 .keys kbd + kbd { margin-left: -2px; }
 .keys kbd:not(:first-child) { margin-left: 10px; }
@@ -263,6 +267,14 @@ video.scrub.on { visibility: visible; }
 .toggle input:checked + i { background: var(--text); border-color: var(--text); }
 .toggle input:checked + i::after { transform: translateX(16px); background: var(--bg); }
 .hotkey { min-width: 120px; font-weight: 600; }
+.sub-row { padding-left: 32px; min-height: 52px; }
+.apps-row { align-items: flex-start; }
+.apps-row select { margin-top: 2px; }
+.app-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.app-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 4px 0 10px; border-radius: 13px; border: 1px solid var(--line-2); background: var(--raised); font-size: 12.5px; }
+.app-chip button { width: 20px; height: 20px; border: 0; border-radius: 10px; background: none; color: var(--text-3); cursor: pointer; display: grid; place-items: center; }
+.app-chip button:hover { background: var(--press); color: var(--text); }
+.app-empty { color: var(--text-3); font-size: 12px; }
 .hotkey.listening { border-color: var(--accent); color: var(--text-2); font-weight: 400; }
 
 /* ---------- toast ---------- */
@@ -280,3 +292,30 @@ video.scrub.on { visibility: visible; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #2a2c32; border-radius: 5px; border: 3px solid transparent; background-clip: padding-box; }
+
+/* ---------- tray popout ---------- */
+body.popout {
+  display: flex; flex-direction: column;
+  background: #131417;
+  padding: 14px 14px 12px;
+  overflow: hidden;
+}
+.po-head { display: flex; align-items: center; gap: 9px; }
+.po-title { font-weight: 600; }
+.po-state { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; color: var(--text-2); font-size: 12px; }
+.po-state .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+body.popout.on .po-state .dot { background: var(--accent); animation: blink 2.4s ease-in-out infinite; }
+body.popout.err .po-state { color: var(--warn); }
+body.popout.err .po-state .dot { background: var(--warn); }
+.po-meta { margin: 6px 0 12px; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.po-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.po-actions .btn.primary { justify-content: flex-start; }
+.po-actions .btn.primary kbd { margin-left: auto; }
+.po-actions #po-toggle { min-width: 84px; }
+.po-settings { margin: 14px -14px 0; padding: 4px 14px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--bg); }
+.po-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 42px; }
+.po-row + .po-row { border-top: 1px solid var(--line); }
+.po-row > span:first-child { color: var(--text-2); }
+.po-row .seg span { padding: 0 8px; height: 22px; line-height: 22px; font-size: 12px; }
+.po-foot { display: flex; align-items: center; gap: 6px; margin-top: auto; padding-top: 12px; }
+.po-foot #po-open { flex: 1; }

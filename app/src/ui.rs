@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use hindsight_recorder::{list_monitors, MonitorInfo, Settings};
+use hindsight_recorder::{list_monitors, AudioApp, AudioDevice, MonitorInfo, Settings};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -160,10 +160,12 @@ async fn trim_clip(handle: AppHandle, path: PathBuf, start: f64, end: f64, exact
 }
 
 #[tauri::command]
-async fn export_clip(handle: AppHandle, path: PathBuf, start: f64, end: f64, target_mb: f64) -> Res<PathBuf> {
+#[allow(clippy::too_many_arguments)]
+async fn export_clip(handle: AppHandle, path: PathBuf, start: f64, end: f64, target_mb: Option<f64>, codec: String, label: String) -> Res<PathBuf> {
     tauri::async_runtime::spawn_blocking(move || {
         let enc = recording_encoder();
-        clips::export_for_size(&path, start, end, target_mb, &enc, &|pct| {
+        let codec = if codec == "av1" { clips::ExportCodec::Av1 } else { clips::ExportCodec::H264 };
+        clips::export(&path, start, end, target_mb, codec, &label, &enc, &|pct| {
             let _ = handle.emit("progress", Progress { job: "export".into(), pct });
         })
     })
@@ -177,25 +179,109 @@ fn allow_dir(handle: &AppHandle, dir: &std::path::Path) {
     let _ = handle.asset_protocol_scope().allow_directory(dir, true);
 }
 
-pub fn run() {
+pub enum Mode {
+    Full,
+    /// Small panel above the tray icon at (x, y), physical pixels.
+    Popout { x: f64, y: f64 },
+}
+
+#[tauri::command]
+async fn audio_devices(output: bool) -> Res<Vec<AudioDevice>> {
+    tauri::async_runtime::spawn_blocking(move || hindsight_recorder::list_devices(output)).await.map_err(err)?.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn audio_apps() -> Res<Vec<AudioApp>> {
+    tauri::async_runtime::spawn_blocking(hindsight_recorder::list_audio_apps).await.map_err(err)?.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn open_full_app(handle: AppHandle) -> Res<()> {
+    tauri::async_runtime::spawn_blocking(|| rpc::<Value>(Request::OpenUi)).await.map_err(err)??;
+    handle.exit(0);
+    Ok(())
+}
+
+/// The popout page calls this once it has rendered, so it never flashes empty.
+#[tauri::command]
+fn popout_ready(window: tauri::WebviewWindow) {
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+#[tauri::command]
+fn close_popout(handle: AppHandle) {
+    handle.exit(0);
+}
+
+const POPOUT_W: f64 = 340.0;
+const POPOUT_H: f64 = 486.0;
+
+/// Place the popout above the tray icon, inside the work area of its monitor.
+fn place_popout(window: &tauri::WebviewWindow, x: f64, y: f64) -> tauri::Result<()> {
+    let Some(mon) = window.monitor_from_point(x, y)?.or(window.primary_monitor()?) else { return Ok(()) };
+    let s = mon.scale_factor();
+    let (w, h) = (POPOUT_W * s, POPOUT_H * s);
+    let wa = mon.work_area();
+    let (left, top) = (wa.position.x as f64, wa.position.y as f64);
+    let (right, bottom) = (left + wa.size.width as f64, top + wa.size.height as f64);
+    let gap = 12.0 * s;
+    let px = (x - w / 2.0).clamp(left + gap, right - w - gap);
+    // Taskbar at the bottom (usual) or top.
+    let py = if y >= top + (bottom - top) / 2.0 { bottom - h - gap } else { top + gap };
+    window.set_position(tauri::PhysicalPosition::new(px.round() as i32, py.round() as i32))
+}
+
+pub fn run(mode: Mode) {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
             allow_dir(&handle, &clips::thumbs_dir());
             let scrub_dir = hindsight_recorder::data_dir().join("scrub");
             let _ = std::fs::create_dir_all(&scrub_dir);
             allow_dir(&handle, &scrub_dir);
-            if let Ok(dir) = output_dir() {
-                allow_dir(&handle, &dir);
+            match mode {
+                Mode::Full => {
+                    if let Ok(dir) = output_dir() {
+                        allow_dir(&handle, &dir);
+                    }
+                    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                        .title("Hindsight")
+                        .inner_size(1200.0, 780.0)
+                        .min_inner_size(860.0, 560.0)
+                        .background_color(tauri::window::Color(15, 16, 18, 255))
+                        .theme(Some(tauri::Theme::Dark))
+                        .build()?;
+                }
+                Mode::Popout { x, y } => {
+                    let w = WebviewWindowBuilder::new(app, "popout", WebviewUrl::App("popout.html".into()))
+                        .title("Hindsight")
+                        .inner_size(POPOUT_W, POPOUT_H)
+                        .resizable(false)
+                        .decorations(false)
+                        .shadow(true)
+                        .skip_taskbar(true)
+                        .always_on_top(true)
+                        .visible(false)
+                        .background_color(tauri::window::Color(19, 20, 23, 255))
+                        .theme(Some(tauri::Theme::Dark))
+                        .build()?;
+                    place_popout(&w, x, y)?;
+                    // Like a Windows flyout: gone as soon as focus moves elsewhere.
+                    let was_focused = std::sync::atomic::AtomicBool::new(false);
+                    let h = handle.clone();
+                    w.on_window_event(move |ev| {
+                        if let tauri::WindowEvent::Focused(f) = ev {
+                            if *f {
+                                was_focused.store(true, std::sync::atomic::Ordering::Relaxed);
+                            } else if was_focused.load(std::sync::atomic::Ordering::Relaxed) {
+                                h.exit(0);
+                            }
+                        }
+                    });
+                }
             }
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("Hindsight")
-                .inner_size(1200.0, 780.0)
-                .min_inner_size(860.0, 560.0)
-                .background_color(tauri::window::Color(15, 16, 18, 255))
-                .theme(Some(tauri::Theme::Dark))
-                .build()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -211,6 +297,11 @@ pub fn run() {
             app_version,
             open_logs,
             filmstrip,
+            audio_devices,
+            audio_apps,
+            open_full_app,
+            popout_ready,
+            close_popout,
             rename_clip,
             show_in_folder,
             open_external,

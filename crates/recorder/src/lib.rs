@@ -21,7 +21,8 @@ use hindsight_capture::{monitors, Backend, Capture, GpuDevice};
 use hindsight_encode::{EncoderConfig, HwFrame, Mp4Writer, Packet, StreamParams, VideoEncoder};
 use serde::Serialize;
 
-pub use settings::{data_dir, CodecChoice, Quality, Settings};
+pub use audio::{list_audio_apps, list_devices, AudioApp, AudioDevice};
+pub use settings::{data_dir, CodecChoice, DesktopMode, Quality, Settings};
 
 use audio::AudioPipeline;
 use clock::now_100ns;
@@ -221,12 +222,13 @@ fn open_session(s: &Settings) -> Result<Session> {
 
     let origin = now_100ns();
     let replay = Arc::new(Mutex::new(Replay::new(s.buffer_secs)));
-    let audio = if s.desktop_audio || s.microphone {
-        let (a, p) = audio::AudioPipeline::start(s.desktop_audio, s.microphone, origin, replay.clone())?;
+    let sources = s.audio_sources();
+    let audio = if sources.is_empty() {
+        None
+    } else {
+        let (a, p) = audio::AudioPipeline::start(sources.clone(), s.separate_tracks, origin, replay.clone())?;
         params.extend(p);
         Some(a)
-    } else {
-        None
     };
 
     let interval = 10_000_000.0 / s.fps as f64;
@@ -339,7 +341,7 @@ fn open_session(s: &Settings) -> Result<Session> {
         width: w,
         height: h,
         fps: s.fps,
-        audio_tracks: audio::track_layout(s.desktop_audio, s.microphone).iter().map(|t| t.to_string()).collect(),
+        audio_tracks: audio::track_titles(&sources, s.separate_tracks),
         ..Default::default()
     };
     log::info!("recording {} {}x{}@{} via {} on {}", mon.name, w, h, s.fps, status.encoder, gpu.adapter_name);
@@ -446,8 +448,8 @@ impl Recorder {
             || old.codec != new.codec
             || old.quality != new.quality
             || old.buffer_secs != new.buffer_secs
-            || old.desktop_audio != new.desktop_audio
-            || old.microphone != new.microphone
+            || old.audio_sources() != new.audio_sources()
+            || old.separate_tracks != new.separate_tracks
             || self.session.lock().unwrap().is_none();
         if restart {
             self.start();

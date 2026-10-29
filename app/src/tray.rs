@@ -15,6 +15,28 @@ use crate::system;
 struct State {
     recorder: Arc<Recorder>,
     ui: Mutex<Option<Child>>,
+    popout: Mutex<Option<Child>>,
+}
+
+/// Toggle the small tray popout, anchored at the tray icon (physical px).
+fn toggle_popout(handle: &AppHandle, x: f64, y: f64) {
+    let state = handle.state::<State>();
+    let mut popout = state.popout.lock().unwrap();
+    if let Some(mut child) = popout.take() {
+        if matches!(child.try_wait(), Ok(None)) {
+            // Clicking the icon while it's open closes it, like Windows flyouts.
+            let _ = child.kill();
+            return;
+        }
+    }
+    // The click gave us foreground rights; let the popout take focus so it
+    // can close itself when focus leaves.
+    system::allow_foreground();
+    let args = ["--popout".to_string(), format!("{}", x.round() as i64), format!("{}", y.round() as i64)];
+    match std::env::current_exe().and_then(|exe| Command::new(exe).args(&args).spawn()) {
+        Ok(child) => *popout = Some(child),
+        Err(e) => log::error!("failed to start popout: {e}"),
+    }
 }
 
 /// Show the UI process, starting it if needed.
@@ -85,6 +107,11 @@ fn handle_ipc(handle: &AppHandle, req: Request) -> anyhow::Result<serde_json::Va
             refresh(handle);
             json!(null)
         }
+        Request::OpenUi => {
+            let h = handle.clone();
+            handle.run_on_main_thread(move || open_ui(&h))?;
+            json!(null)
+        }
     })
 }
 
@@ -99,7 +126,7 @@ pub fn run(autostarted: bool) {
                 let _ = system::set_autostart(true);
             }
             let recorder = Recorder::new(settings, |_| {});
-            app.manage(State { recorder: recorder.clone(), ui: Mutex::new(None) });
+            app.manage(State { recorder: recorder.clone(), ui: Mutex::new(None), popout: Mutex::new(None) });
 
             TrayIconBuilder::with_id("tray")
                 .icon(app.default_window_icon().cloned().unwrap())
@@ -126,8 +153,11 @@ pub fn run(autostarted: bool) {
                             system::open_with_default(&dir);
                         }
                         "quit" => {
-                            if let Some(mut c) = handle.state::<State>().ui.lock().unwrap().take() {
-                                let _ = c.kill();
+                            let state = handle.state::<State>();
+                            for slot in [&state.ui, &state.popout] {
+                                if let Some(mut c) = slot.lock().unwrap().take() {
+                                    let _ = c.kill();
+                                }
                             }
                             rec.stop();
                             handle.exit(0);
@@ -135,10 +165,12 @@ pub fn run(autostarted: bool) {
                         _ => {}
                     }
                 })
-                .on_tray_icon_event(|tray, ev| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
-                        open_ui(tray.app_handle());
+                .on_tray_icon_event(|tray, ev| match ev {
+                    TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, position, .. } => {
+                        toggle_popout(tray.app_handle(), position.x, position.y);
                     }
+                    TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => open_ui(tray.app_handle()),
+                    _ => {}
                 })
                 .build(app)?;
 

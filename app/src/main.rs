@@ -14,10 +14,16 @@ mod tray;
 mod ui;
 
 fn main() {
-    system::init_logging(std::env::args().any(|a| a == "--ui"));
+    let args: Vec<String> = std::env::args().collect();
+    let ui_mode = args.iter().any(|a| a == "--ui" || a == "--popout");
+    system::init_logging(ui_mode);
     hindsight_encode::quiet_logs();
-    if std::env::args().any(|a| a == "--ui") {
-        ui::run();
+    if let Some(i) = args.iter().position(|a| a == "--popout") {
+        // `--popout X Y`: tray icon position in physical pixels.
+        let at = |k: usize| args.get(i + k).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+        ui::run(ui::Mode::Popout { x: at(1), y: at(2) });
+    } else if ui_mode {
+        ui::run(ui::Mode::Full);
     } else {
         tray::run(std::env::args().any(|a| a == "--autostart"));
     }

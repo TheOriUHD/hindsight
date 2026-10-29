@@ -320,6 +320,7 @@ function drawTimeline() {
   $("#p-dur").textContent = fmtTime(d);
   const full = trim.start < 0.05 && trim.end > d - 0.05;
   $("#p-range").textContent = full ? "Drag the red handles to trim" : `Selection ${fmtTime(trim.start)} – ${fmtTime(trim.end)} · ${fmtTime(trim.end - trim.start)}`;
+  if (typeof updateExportHint === "function") updateExportHint();
 }
 
 (function tick() {
@@ -555,7 +556,92 @@ listen("progress", (e) => {
 });
 
 $("#p-trim").onclick = () => runJob("Selection", "trim_clip", { path: cur.path, start: trim.start, end: trim.end, exact: $("#p-exact").checked });
-$("#p-export").onclick = () => runJob("Export", "export_clip", { path: cur.path, start: trim.start, end: trim.end, targetMb: Number($("#p-size").value) });
+/* Export presets. Limits as of October 2026: Discord free 20 MB (raised from
+ * 10 MB in August 2026), Nitro Basic 50 MB, Nitro 1 GB; WhatsApp 16 MB for
+ * regular video; email 25 MB, of which encoding leaves about 18 MB for the
+ * file; X 512 MB and 2:20 for free accounts. */
+const PRESETS = {
+  discord: { mb: 20, file: "Discord" },
+  "nitro-basic": { mb: 50, file: "Nitro Basic" },
+  nitro: { mb: 1000, file: "Nitro" },
+  whatsapp: { mb: 16, file: "WhatsApp" },
+  email: { mb: 18, file: "Email" },
+  x: { mb: 500, file: "X", maxDur: 140 },
+  hq: { mb: null, file: "Export" },
+  custom: { mb: null, file: null },
+};
+
+function presetTarget() {
+  const id = $("#p-preset").value;
+  const p = PRESETS[id];
+  if (id === "custom") {
+    const mb = Math.max(1, Number($("#p-custom-mb").value) || 1);
+    return { mb, file: `${mb} MB`, maxDur: null };
+  }
+  return p;
+}
+
+// Mirrors clips::export: the resolution / frame rate the bitrate can carry.
+function exportPlan() {
+  const p = presetTarget();
+  const dur = Math.max(0.1, trim.end - trim.start);
+  const srcH = video.videoHeight || 1080;
+  const srcFps = Math.min(status?.fps || 60, 60);
+  if (p.mb == null) return { text: `${Math.min(srcH, 2160)}p ${srcFps} fps, high quality` };
+  const av1 = $("#p-codec").value === "av1";
+  const total = (p.mb * 8000 * 0.95) / dur;
+  const audio = total < 1500 ? 64 : total < 6000 ? 96 : 160;
+  const vid = Math.max(100, total - audio);
+  const minBpp = av1 ? 0.045 : 0.075;
+  const ladder = [[2160, 60], [1440, 60], [1080, 60], [1080, 30], [720, 60], [720, 30], [540, 30], [480, 30], [360, 30]];
+  let pick = [Math.min(360, srcH), Math.min(30, srcFps)];
+  for (const [h0, f0] of ladder) {
+    const h = Math.min(h0, srcH), f = Math.min(f0, srcFps);
+    if ((vid * 1000) / ((h * 16) / 9 * h * f) >= minBpp) { pick = [h, f]; break; }
+  }
+  const warn = p.maxDur && dur > p.maxDur ? `Over ${fmtTime(p.maxDur, false)}: trim it first` : null;
+  return { text: warn || `${pick[0]}p ${pick[1]} fps`, warn: !!warn, tiny: pick[0] < 540 };
+}
+
+function updateExportHint() {
+  if (!cur) return;
+  $("#p-custom-mb").hidden = $("#p-preset").value !== "custom";
+  const plan = exportPlan();
+  const hint = $("#p-export-hint");
+  hint.textContent = plan.text;
+  hint.className = "sub" + (plan.warn ? " warn" : "");
+  hint.title = plan.tiny ? "The selection is long for this size limit. A shorter selection looks sharper." : "";
+  $("#p-export").disabled = busy || !!plan.warn;
+}
+for (const id of ["#p-preset", "#p-codec", "#p-custom-mb"]) {
+  $(id).addEventListener("input", () => {
+    try {
+      localStorage.setItem("hs-export", JSON.stringify({ preset: $("#p-preset").value, codec: $("#p-codec").value, mb: $("#p-custom-mb").value }));
+    } catch {}
+    updateExportHint();
+  });
+}
+try {
+  const saved = JSON.parse(localStorage.getItem("hs-export") || "null");
+  if (saved) {
+    $("#p-preset").value = saved.preset in PRESETS ? saved.preset : "discord";
+    $("#p-codec").value = saved.codec === "av1" ? "av1" : "h264";
+    $("#p-custom-mb").value = saved.mb || 100;
+  }
+} catch {}
+video.addEventListener("loadedmetadata", updateExportHint);
+
+$("#p-export").onclick = () => {
+  const p = presetTarget();
+  runJob("Export", "export_clip", {
+    path: cur.path,
+    start: trim.start,
+    end: trim.end,
+    targetMb: p.mb,
+    codec: $("#p-codec").value,
+    label: p.file,
+  });
+};
 
 document.addEventListener("keydown", (e) => {
   if (view !== "player" || !cur || ["INPUT", "SELECT"].includes(e.target.tagName)) return;
@@ -592,7 +678,7 @@ document.addEventListener("keydown", (e) => {
 
 /* ---------- settings ---------- */
 const form = $("#settings");
-const FIELDS = ["monitor", "max_height", "fps", "quality", "codec", "buffer_secs", "save_sound", "save_overlay", "desktop_audio", "microphone", "start_with_windows"];
+const FIELDS = ["monitor", "max_height", "fps", "quality", "codec", "buffer_secs", "save_sound", "save_overlay", "desktop_audio", "microphone", "start_with_windows", "desktop_mode", "output_device", "input_device", "separate_tracks"];
 const NUMERIC = ["fps", "max_height", "buffer_secs"];
 const QUALITY = {
   balanced: "Smaller files. Fine for most games.",
@@ -616,7 +702,91 @@ function fillSettings() {
   $("#out-dir").title = settings.output_dir;
   $("#quality-desc").textContent = QUALITY[settings.quality] || "";
   memHint();
+  fillAudio();
 }
+
+/* ---------- audio sources ---------- */
+let outputDevices = [];
+let inputDevices = [];
+
+function fillDeviceSelect(sel, devices, current, label) {
+  sel.replaceChildren(el("option", null, label));
+  sel.firstChild.value = "";
+  for (const d of devices) {
+    const o = el("option", null, d.name || "Unnamed device");
+    o.value = d.id;
+    sel.append(o);
+  }
+  // A saved device that's unplugged right now still shows, so it isn't lost.
+  if (current && !devices.some((d) => d.id === current)) {
+    const o = el("option", null, "Saved device (not connected)");
+    o.value = current;
+    sel.append(o);
+  }
+  sel.value = current || "";
+}
+
+function fillAudio() {
+  const desk = !!settings.desktop_audio;
+  const apps = settings.desktop_mode === "apps";
+  const show = {
+    desktop: desk,
+    "desktop-all": desk && !apps,
+    "desktop-apps": desk && apps,
+    mic: !!settings.microphone,
+    multi: (desk ? (apps ? Math.max(1, settings.audio_apps.length) : 1) : 0) + (settings.microphone ? 1 : 0) > 1,
+  };
+  document.querySelectorAll("[data-show]").forEach((r) => (r.hidden = !show[r.dataset.show]));
+  $("#mode-desc").textContent = apps ? "Just the apps below, e.g. the game without Discord or music." : "Everything you hear on the output device.";
+  fillDeviceSelect($("#output-device"), outputDevices, settings.output_device, "Windows default");
+  fillDeviceSelect($("#input-device"), inputDevices, settings.input_device, "Windows default");
+
+  const list = $("#app-list");
+  list.replaceChildren();
+  if (!settings.audio_apps.length) list.append(el("span", "app-empty", "No apps yet. Until you add one, everything is recorded."));
+  for (const a of settings.audio_apps) {
+    const chip = el("span", "app-chip");
+    chip.title = a.exe;
+    const x = el("button", null, "✕");
+    x.type = "button";
+    x.title = `Stop recording ${a.name}`;
+    x.onclick = () => pushSettings({ ...settings, audio_apps: settings.audio_apps.filter((b) => b.exe !== a.exe) });
+    chip.append(el("span", null, a.name), x);
+    list.append(chip);
+  }
+}
+
+async function loadAudioDevices() {
+  [outputDevices, inputDevices] = await Promise.all([
+    invoke("audio_devices", { output: true }).catch(() => []),
+    invoke("audio_devices", { output: false }).catch(() => []),
+  ]);
+  if (settings) fillAudio();
+}
+
+// The app picker lists whatever is playing audio right now; refreshed on open.
+async function refreshAudioApps() {
+  const sel = $("#add-app");
+  const apps = await invoke("audio_apps").catch(() => []);
+  sel.replaceChildren(el("option", null, apps.length ? "Add an app…" : "Nothing is playing audio right now"));
+  sel.firstChild.value = "";
+  for (const a of apps) {
+    if (settings.audio_apps.some((b) => b.exe.toLowerCase() === a.exe.toLowerCase())) continue;
+    const o = el("option", null, a.name === a.exe.replace(/\.exe$/i, "") ? a.name : `${a.name} (${a.exe})`);
+    o.value = JSON.stringify(a);
+    sel.append(o);
+  }
+}
+$("#add-app").addEventListener("pointerdown", refreshAudioApps);
+$("#add-app").addEventListener("focus", refreshAudioApps);
+$("#add-app").addEventListener("change", (e) => {
+  e.stopPropagation();
+  const v = e.target.value;
+  if (!v) return;
+  const app = JSON.parse(v);
+  e.target.value = "";
+  pushSettings({ ...settings, audio_apps: [...settings.audio_apps, app] });
+});
 
 function memHint() {
   // Mirrors Settings::max_kbps: the most the replay buffer can hold in RAM.
@@ -664,7 +834,8 @@ form.addEventListener("change", (e) => {
   const next = { ...settings };
   if (i.type === "checkbox") next[i.name] = i.checked;
   else if (NUMERIC.includes(i.name)) next[i.name] = Number(i.value);
-  else if (i.name === "monitor") next.monitor = i.value || null;
+  else if (["monitor", "output_device", "input_device"].includes(i.name)) next[i.name] = i.value || null;
+  else if (i.id === "add-app") return;
   else next[i.name] = i.value;
   pushSettings(next);
 });
@@ -746,6 +917,7 @@ $("#hotkey").addEventListener("click", () => {
   if (settings) fillSettings();
   refreshStatus();
   loadClips();
+  loadAudioDevices();
 })();
 
 // Mouse back/forward buttons would otherwise navigate the webview.

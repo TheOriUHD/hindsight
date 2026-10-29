@@ -104,13 +104,30 @@
         <div class="spacer"></div>
         <label class="check" title="Re-encodes so the cut lands on the exact frame. Off: instant, cuts at the nearest keyframe."><input type="checkbox" id="p-exact" /><span></span>Frame-accurate</label>
         <button class="btn" id="p-trim"><svg class="ic"><use href="#i-cut"/></svg>Save selection</button>
-        <div class="split">
-          <select id="p-size" title="Target file size">
-            <option value="10">10 MB</option>
-            <option value="25">25 MB</option>
-            <option value="50">50 MB</option>
-            <option value="100">100 MB</option>
-            <option value="500">500 MB</option>
+        <div class="export">
+          <span class="sub" id="p-export-hint"></span>
+          <input type="number" id="p-custom-mb" min="1" max="100000" step="1" value="100" title="Size limit in MB" hidden />
+          <select id="p-preset" title="Where it's going">
+            <optgroup label="Discord">
+              <option value="discord">Discord · 20 MB</option>
+              <option value="nitro-basic">Nitro Basic · 50 MB</option>
+              <option value="nitro">Nitro · 1 GB</option>
+            </optgroup>
+            <optgroup label="Messaging and email">
+              <option value="whatsapp">WhatsApp · 16 MB</option>
+              <option value="email">Email attachment · 25 MB</option>
+            </optgroup>
+            <optgroup label="Social">
+              <option value="x">X / Twitter · 512 MB</option>
+            </optgroup>
+            <optgroup label="Other">
+              <option value="hq">High quality, no limit</option>
+              <option value="custom">Custom size</option>
+            </optgroup>
+          </select>
+          <select id="p-codec" title="H.264 plays everywhere. AV1 looks much better at the same size but needs a recent phone or PC to play.">
+            <option value="h264">H.264</option>
+            <option value="av1">AV1</option>
           </select>
           <button class="btn primary" id="p-export"><svg class="ic"><use href="#i-export"/></svg>Export</button>
         </div>
@@ -184,8 +201,23 @@
 
         <h2>Audio</h2>
         <div class="group">
-          <label class="row toggle"><div class="lbl">Desktop audio<small>Everything you hear, including the game.</small></div><input type="checkbox" name="desktop_audio" /><i></i></label>
-          <label class="row toggle"><div class="lbl">Microphone<small>Adds a mixed track plus separate desktop and mic tracks.</small></div><input type="checkbox" name="microphone" /><i></i></label>
+          <label class="row toggle"><div class="lbl">Game and desktop audio</div><input type="checkbox" name="desktop_audio" /><i></i></label>
+          <div class="row sub-row" data-show="desktop"><div class="lbl">Record<small id="mode-desc"></small></div>
+            <div class="seg">
+              <label><input type="radio" name="desktop_mode" value="all" /><span>Everything</span></label>
+              <label><input type="radio" name="desktop_mode" value="apps" /><span>Selected apps</span></label>
+            </div>
+          </div>
+          <div class="row sub-row" data-show="desktop-all"><div class="lbl">Output device<small>Loopback of what plays on this device.</small></div><select name="output_device" id="output-device"></select></div>
+          <div class="row sub-row apps-row" data-show="desktop-apps">
+            <div class="lbl">Apps<small>Only these apps are recorded, each with what it spawns. Apps that aren't running yet are picked up when they start.</small>
+              <div class="app-list" id="app-list"></div>
+            </div>
+            <select id="add-app"><option value="">Add an app…</option></select>
+          </div>
+          <label class="row toggle"><div class="lbl">Microphone</div><input type="checkbox" name="microphone" /><i></i></label>
+          <div class="row sub-row" data-show="mic"><div class="lbl">Input device</div><select name="input_device" id="input-device"></select></div>
+          <label class="row toggle" data-show="multi"><div class="lbl">Separate tracks<small>Besides the mixed track, keep each source on its own track for editing.</small></div><input type="checkbox" name="separate_tracks" /><i></i></label>
         </div>
 
         <h2>Storage</h2>

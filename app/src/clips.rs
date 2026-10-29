@@ -251,36 +251,140 @@ pub fn trim(src: &Path, start: f64, end: f64, exact: bool, recording_encoder: &s
 }
 
 /// Re-encode to H.264 + AAC (plays everywhere) so the file fits under `target_mb`.
-pub fn export_for_size(src: &Path, start: f64, end: f64, target_mb: f64, recording_encoder: &str, progress: &dyn Fn(f64)) -> Result<PathBuf> {
+/// Resolution, frame rate of a clip's first video stream (from ffmpeg's banner).
+fn probe_video(src: &Path) -> (u32, u32, f64) {
+    let out = Command::new(ffmpeg_exe()).arg("-hide_banner").arg("-i").arg(src).creation_flags(CREATE_NO_WINDOW).output();
+    let text = out.map(|o| String::from_utf8_lossy(&o.stderr).to_string()).unwrap_or_default();
+    let line = text.lines().find(|l| l.contains("Video:")).unwrap_or("");
+    let mut w = 1920;
+    let mut h = 1080;
+    for tok in line.split([' ', ',']) {
+        if let Some((a, b)) = tok.split_once('x') {
+            if let (Ok(x), Ok(y)) = (a.parse::<u32>(), b.parse::<u32>()) {
+                if x >= 16 && y >= 16 {
+                    (w, h) = (x, y);
+                    break;
+                }
+            }
+        }
+    }
+    let fps = line
+        .split(',')
+        .find_map(|p| p.trim().strip_suffix(" fps").and_then(|v| v.parse::<f64>().ok()))
+        .unwrap_or(60.0);
+    (w, h, fps)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ExportCodec {
+    H264,
+    Av1,
+}
+
+/// Re-encode the selection for sharing. With `target_mb`, the file is
+/// guaranteed to fit: resolution and frame rate are chosen so the bitrate
+/// still looks good (a sharp 720p30 beats a smeared 1080p60), the encoder
+/// runs its slowest, look-ahead quality mode, and if the result is still over
+/// the limit it's re-encoded smaller. Without a target it's a high-quality
+/// copy at the source resolution.
+pub fn export(
+    src: &Path,
+    start: f64,
+    end: f64,
+    target_mb: Option<f64>,
+    codec: ExportCodec,
+    label: &str,
+    recording_encoder: &str,
+    progress: &dyn Fn(f64),
+) -> Result<PathBuf> {
     let dur = (end - start).max(0.1);
-    let audio_kbps = 128.0;
-    // 6% container/rate-control headroom.
-    let video_kbps = ((target_mb * 8_000.0 * 0.94) / dur - audio_kbps).max(150.0);
-    let height = if video_kbps < 1_500.0 {
-        480
-    } else if video_kbps < 3_500.0 {
-        720
-    } else if video_kbps < 9_000.0 {
-        1080
+    let (_, src_h, src_fps) = probe_video(src);
+    let src_fps = src_fps.max(1.0);
+    let vendor = if recording_encoder.contains("nvenc") {
+        "nvenc"
+    } else if recording_encoder.contains("amf") {
+        "amf"
     } else {
-        1440
+        "mf"
     };
-    let dst = sibling(src, &format!("{}MB", target_mb.round() as u32));
-    let args: Vec<String> = vec![
-        "-hwaccel".into(), "auto".into(),
-        "-ss".into(), format!("{start:.3}"), "-i".into(), src.to_string_lossy().into(),
-        "-t".into(), format!("{dur:.3}"),
-        "-map".into(), "0:v:0".into(), "-map".into(), "0:a:0?".into(),
-        "-vf".into(), format!("scale=-2:'min({height},ih)',fps='min(60,source_fps)'"),
-        "-c:v".into(), h264_encoder(recording_encoder).into(),
-        "-b:v".into(), format!("{video_kbps:.0}k"), "-maxrate".into(), format!("{video_kbps:.0}k"), "-bufsize".into(), format!("{:.0}k", video_kbps),
-        "-pix_fmt".into(), "yuv420p".into(),
-        "-c:a".into(), "aac".into(), "-b:a".into(), format!("{audio_kbps:.0}k"),
-        "-movflags".into(), "+faststart".into(),
-        dst.to_string_lossy().into(),
-    ];
-    run_ffmpeg(&args, dur, progress)?;
-    Ok(dst)
+    let encoder = format!("{}_{vendor}", if codec == ExportCodec::Av1 { "av1" } else { "h264" });
+    // Bits per pixel each codec needs to look clean on fast game footage.
+    let min_bpp = if codec == ExportCodec::Av1 { 0.045 } else { 0.075 };
+
+    let (audio_kbps, mut video_kbps, height, fps) = match target_mb {
+        Some(mb) => {
+            // 5% headroom for the MP4 container and rate-control overshoot.
+            let total = mb * 8_000.0 * 0.95 / dur;
+            let audio = if total < 1_500.0 { 64.0 } else if total < 6_000.0 { 96.0 } else { 160.0 };
+            let video = (total - audio).max(100.0);
+            let ladder = [(2160, 60.0), (1440, 60.0), (1080, 60.0), (1080, 30.0), (720, 60.0), (720, 30.0), (540, 30.0), (480, 30.0), (360, 30.0)];
+            let (h, f) = ladder
+                .iter()
+                .map(|&(h, f)| (h.min(src_h), f64::min(f, src_fps)))
+                .find(|&(h, f)| {
+                    let w = h as f64 * 16.0 / 9.0;
+                    video * 1000.0 / (w * h as f64 * f) >= min_bpp
+                })
+                .unwrap_or((360.min(src_h), f64::min(30.0, src_fps)));
+            // Don't spend more than the footage can use.
+            let ceiling = h as f64 * 16.0 / 9.0 * h as f64 * f * 0.25 / 1000.0;
+            (audio, video.min(ceiling), h, f)
+        }
+        None => {
+            let (h, f) = (src_h.min(2160), f64::min(src_fps, 60.0));
+            (192.0, h as f64 * 16.0 / 9.0 * h as f64 * f * 0.12 / 1000.0, h, f)
+        }
+    };
+
+    let dst = sibling(src, label);
+    let limit_bytes = target_mb.map(|mb| mb * 1_000_000.0);
+    for attempt in 0..3 {
+        let mut args: Vec<String> = vec![
+            "-hwaccel".into(), "auto".into(),
+            "-ss".into(), format!("{start:.3}"), "-i".into(), src.to_string_lossy().into(),
+            "-t".into(), format!("{dur:.3}"),
+            "-map".into(), "0:v:0".into(), "-map".into(), "0:a:0?".into(),
+            "-vf".into(), format!("scale=-2:{height}:flags=lanczos,fps={fps}"),
+            "-c:v".into(), encoder.clone(),
+            "-b:v".into(), format!("{video_kbps:.0}k"),
+            "-maxrate".into(), format!("{:.0}k", video_kbps * 1.5),
+            "-bufsize".into(), format!("{:.0}k", video_kbps * 2.0),
+            "-g".into(), format!("{}", (fps * 2.0).round()),
+            "-pix_fmt".into(), "yuv420p".into(),
+        ];
+        match vendor {
+            "nvenc" => {
+                args.extend(["-preset", "p7", "-tune", "hq", "-multipass", "fullres", "-rc", "vbr", "-rc-lookahead", "32", "-spatial-aq", "1", "-bf", "3", "-b_ref_mode", "middle"].map(String::from));
+                if codec == ExportCodec::H264 {
+                    args.extend(["-temporal-aq", "1"].map(String::from));
+                }
+            }
+            "amf" => args.extend(["-quality", "quality", "-rc", "vbr_peak"].map(String::from)),
+            _ => {}
+        }
+        args.extend(["-c:a".into(), "aac".into(), "-b:a".into(), format!("{audio_kbps:.0}k"), "-ac".into(), "2".into()]);
+        args.extend(["-movflags".into(), "+faststart".into(), dst.to_string_lossy().into()]);
+        match run_ffmpeg(&args, dur, progress) {
+            Ok(()) => {}
+            // No hardware AV1 on this GPU: fall back to H.264 once.
+            Err(e) if codec == ExportCodec::Av1 && attempt == 0 => {
+                log::warn!("AV1 export failed ({e:#}), using H.264");
+                let _ = std::fs::remove_file(&dst);
+                return export(src, start, end, target_mb, ExportCodec::H264, label, recording_encoder, progress);
+            }
+            Err(e) => return Err(e),
+        }
+        let size = std::fs::metadata(&dst).map(|m| m.len() as f64).unwrap_or(0.0);
+        match limit_bytes {
+            Some(limit) if size > limit => {
+                log::info!("export {:.1} MB over the {:.1} MB limit, retrying smaller", size / 1e6, limit / 1e6);
+                video_kbps *= limit / size * 0.92;
+            }
+            _ => return Ok(dst),
+        }
+    }
+    let _ = std::fs::remove_file(&dst);
+    bail!("couldn't fit the clip under {:.0} MB; try a shorter selection", target_mb.unwrap_or(0.0))
 }
 
 /// The 360p all-keyframe copy the player scrubs through. The recorder writes

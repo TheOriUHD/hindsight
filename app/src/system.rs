@@ -45,6 +45,14 @@ pub fn focus_process_window(pid: u32) {
     }
 }
 
+/// Let whichever process we start next take the foreground (it may only do so
+/// if we currently own it, e.g. right after a tray click).
+pub fn allow_foreground() {
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(windows::Win32::UI::WindowsAndMessaging::ASFW_ANY);
+    }
+}
+
 pub fn show_in_explorer(path: &Path) {
     // raw_arg: explorer wants `/select,"C:\path with spaces"` unsplit.
     let _ = Command::new("explorer").raw_arg(format!("/select,\"{}\"", path.display())).spawn();

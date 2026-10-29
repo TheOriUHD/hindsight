@@ -4,6 +4,17 @@ use anyhow::Result;
 use hindsight_encode::Codec;
 use serde::{Deserialize, Serialize};
 
+use crate::audio::{AudioApp, SourceSpec};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DesktopMode {
+    /// Everything that plays on the output device.
+    All,
+    /// Only the apps in `audio_apps`.
+    Apps,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CodecChoice {
@@ -38,6 +49,15 @@ pub struct Settings {
     pub hotkey: String,
     pub desktop_audio: bool,
     pub microphone: bool,
+    /// Output device for desktop audio; None = Windows default.
+    pub output_device: Option<String>,
+    /// Microphone; None = Windows default.
+    pub input_device: Option<String>,
+    pub desktop_mode: DesktopMode,
+    /// Apps recorded when `desktop_mode` is `Apps`.
+    pub audio_apps: Vec<AudioApp>,
+    /// With several sources, also keep each one on its own track.
+    pub separate_tracks: bool,
     pub output_dir: PathBuf,
     pub start_with_windows: bool,
     pub save_sound: bool,
@@ -58,6 +78,11 @@ impl Default for Settings {
             hotkey: "F8".into(),
             desktop_audio: true,
             microphone: false,
+            output_device: None,
+            input_device: None,
+            desktop_mode: DesktopMode::All,
+            audio_apps: Vec::new(),
+            separate_tracks: true,
             output_dir: dirs::video_dir().unwrap_or_else(|| PathBuf::from(".")).join("Hindsight"),
             start_with_windows: true,
             save_sound: true,
@@ -89,6 +114,22 @@ impl Settings {
         self.fps = self.fps.clamp(24, 360);
         self.buffer_secs = self.buffer_secs.clamp(5, 600);
         self
+    }
+
+    /// What to record audio from, in track order.
+    pub fn audio_sources(&self) -> Vec<SourceSpec> {
+        let mut out = Vec::new();
+        if self.desktop_audio {
+            if self.desktop_mode == DesktopMode::Apps && !self.audio_apps.is_empty() {
+                out.extend(self.audio_apps.iter().map(|a| SourceSpec::App { exe: a.exe.clone(), name: a.name.clone() }));
+            } else {
+                out.push(SourceSpec::Output { device: self.output_device.clone() });
+            }
+        }
+        if self.microphone {
+            out.push(SourceSpec::Input { device: self.input_device.clone() });
+        }
+        out
     }
 
     pub fn codec_prefs(&self) -> Vec<Codec> {

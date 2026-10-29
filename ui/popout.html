@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Hindsight</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="popout">
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+      <symbol id="i-window" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></symbol>
+    </defs>
+  </svg>
+
+  <header class="po-head">
+    <svg viewBox="0 0 64 64" class="logo" aria-hidden="true">
+      <path d="M44.5 13.8A22 22 0 1 1 17 15" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round"/>
+      <path d="M10 9l12 3-6 10z" fill="var(--accent)"/>
+      <circle cx="32" cy="32" r="8.5" fill="currentColor"/>
+    </svg>
+    <span class="po-title">Hindsight</span>
+    <span class="po-state" id="po-state"><span class="dot"></span><span id="po-state-text">Starting</span></span>
+  </header>
+
+  <p class="po-meta" id="po-meta">&nbsp;</p>
+
+  <div class="po-actions">
+    <button class="btn primary" id="po-save">Save clip<kbd id="po-key">F8</kbd></button>
+    <button class="btn" id="po-toggle">Pause</button>
+  </div>
+
+  <form class="po-settings" id="po-form" autocomplete="off">
+    <div class="po-row"><span>Clip length</span>
+      <div class="seg">
+        <label><input type="radio" name="buffer_secs" value="15" /><span>15s</span></label>
+        <label><input type="radio" name="buffer_secs" value="30" /><span>30s</span></label>
+        <label><input type="radio" name="buffer_secs" value="60" /><span>1m</span></label>
+        <label><input type="radio" name="buffer_secs" value="120" /><span>2m</span></label>
+        <label><input type="radio" name="buffer_secs" value="300" /><span>5m</span></label>
+      </div>
+    </div>
+    <div class="po-row"><span>Frame rate</span>
+      <div class="seg">
+        <label><input type="radio" name="fps" value="60" /><span>60</span></label>
+        <label><input type="radio" name="fps" value="120" /><span>120</span></label>
+        <label><input type="radio" name="fps" value="144" /><span>144</span></label>
+        <label><input type="radio" name="fps" value="240" /><span>240</span></label>
+      </div>
+    </div>
+    <div class="po-row"><span>Quality</span>
+      <div class="seg">
+        <label><input type="radio" name="quality" value="balanced" /><span>Balanced</span></label>
+        <label><input type="radio" name="quality" value="high" /><span>High</span></label>
+        <label><input type="radio" name="quality" value="max" /><span>Max</span></label>
+      </div>
+    </div>
+    <label class="po-row toggle"><span>Desktop audio</span><input type="checkbox" name="desktop_audio" /><i></i></label>
+    <label class="po-row toggle"><span>Microphone</span><input type="checkbox" name="microphone" /><i></i></label>
+    <label class="po-row toggle"><span>Popup on save</span><input type="checkbox" name="save_overlay" /><i></i></label>
+  </form>
+
+  <footer class="po-foot">
+    <button class="btn" id="po-open"><svg class="ic"><use href="#i-window"/></svg>Open Hindsight</button>
+    <button class="icon-btn" id="po-folder" title="Open clips folder"><svg class="ic"><use href="#i-folder"/></svg></button>
+  </footer>
+
+  <script src="popout.js"></script>
+</body>
+</html>

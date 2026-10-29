@@ -25,6 +25,8 @@ pub enum Request {
     SetSettings { settings: Settings },
     SaveClip,
     SetEnabled { enabled: bool },
+    /// Open (or focus) the full library window; sent by the tray popout.
+    OpenUi,
 }
 
 #[derive(Serialize, Deserialize)]

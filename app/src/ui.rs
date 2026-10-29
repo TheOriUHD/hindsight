@@ -91,10 +91,10 @@ fn delete_clip(path: PathBuf) -> Res<()> {
 }
 
 #[tauri::command]
-async fn scrub_proxy(handle: AppHandle, path: PathBuf) -> Option<PathBuf> {
+async fn scrub_proxy(handle: AppHandle, path: PathBuf, generate: bool) -> Option<PathBuf> {
     tauri::async_runtime::spawn_blocking(move || {
         let enc = recording_encoder();
-        clips::scrub_proxy(&path, &enc, move |clip, proxy| {
+        clips::scrub_proxy(&path, generate, &enc, move |clip, proxy| {
             let _ = handle.emit("scrub-ready", (clip, proxy));
         })
     })
@@ -106,6 +106,21 @@ async fn scrub_proxy(handle: AppHandle, path: PathBuf) -> Option<PathBuf> {
 #[tauri::command]
 fn rename_clip(path: PathBuf, name: String) -> Res<PathBuf> {
     clips::rename(&path, &name).map_err(err)
+}
+
+#[tauri::command]
+async fn filmstrip(path: PathBuf) -> Option<PathBuf> {
+    tauri::async_runtime::spawn_blocking(move || clips::filmstrip(&path)).await.ok().flatten()
+}
+
+#[tauri::command]
+fn app_version(handle: AppHandle) -> String {
+    handle.package_info().version.to_string()
+}
+
+#[tauri::command]
+fn open_logs() {
+    system::open_with_default(&hindsight_recorder::data_dir());
 }
 
 #[tauri::command]
@@ -178,7 +193,8 @@ pub fn run() {
                 .title("Hindsight")
                 .inner_size(1200.0, 780.0)
                 .min_inner_size(860.0, 560.0)
-                .background_color(tauri::window::Color(14, 15, 19, 255))
+                .background_color(tauri::window::Color(15, 16, 18, 255))
+                .theme(Some(tauri::Theme::Dark))
                 .build()?;
             Ok(())
         })
@@ -192,6 +208,9 @@ pub fn run() {
             list_clips,
             delete_clip,
             scrub_proxy,
+            app_version,
+            open_logs,
+            filmstrip,
             rename_clip,
             show_in_folder,
             open_external,

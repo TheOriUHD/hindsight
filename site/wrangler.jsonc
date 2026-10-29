@@ -1,0 +1,15 @@
+{
+  // Static site: Workers serves the files in public/ directly, no worker code.
+  "name": "hindsight-site",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    { "pattern": "hindsighthq.app", "custom_domain": true },
+    { "pattern": "www.hindsighthq.app", "custom_domain": true }
+  ],
+  "workers_dev": false,
+  "preview_urls": false
+}

@@ -1,4 +1,4 @@
-﻿//! The always-on recorder: capture -> CFR hardware encode + audio -> replay
+//! The always-on recorder: capture -> CFR hardware encode + audio -> replay
 //! buffer -> clip on hotkey.
 
 mod audio;
@@ -57,14 +57,16 @@ pub fn list_monitors() -> Vec<MonitorInfo> {
         .into_iter()
         .enumerate()
         .map(|(i, m)| MonitorInfo {
-            label: format!("Display {} â€” {}Ã—{}{}", i + 1, m.width, m.height, if m.primary { " (primary)" } else { "" }),
+            label: format!("Display {} · {}×{}{}", i + 1, m.width, m.height, if m.primary { " · main" } else { "" }),
             id: m.name,
             primary: m.primary,
         })
         .collect()
 }
 
-const SCRUB_FPS: u32 = 30;
+// Scrubbing feels instant because every frame is a keyframe, not because of
+// the frame rate; 20 fps keeps the proxy at a few percent of the clip's size.
+const SCRUB_FPS: u32 = 20;
 
 fn write_scrub(clip: &Path, packets: &[Packet], base: i64, params: &StreamParams) -> Result<()> {
     if packets.is_empty() {
@@ -254,8 +256,8 @@ fn open_session(s: &Settings) -> Result<Session> {
         height: sh,
         fps: SCRUB_FPS,
         codec: hindsight_encode::Codec::H264,
-        cq: 30,
-        max_kbps: 12_000,
+        cq: 33,
+        max_kbps: 3_000,
         gop: 1,
     };
     let (scrub_source, scrub_params, scrub_encoder) = match VideoEncoder::new(&gpu, scrub_cfg) {

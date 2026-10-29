@@ -2,7 +2,7 @@
 name = "hindsight"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 description = "Hindsight — instant replay clipping"
 
 [build-dependencies]

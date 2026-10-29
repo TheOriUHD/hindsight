@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hindsight: instant replay for Windows</title>
+  <meta name="description" content="Press a key, keep the last minute. Hindsight records your screen on the GPU and saves the moment you just had as an MP4. Free, no account, nothing uploaded." />
+  <meta name="theme-color" content="#151515" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/source-serif-4-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Hindsight: instant replay for Windows" />
+  <meta property="og:description" content="Press a key, keep the last minute. Free, no account, nothing uploaded." />
+  <meta property="og:url" content="https://hindsighthq.app/" />
+  <meta property="og:image" content="https://hindsighthq.app/img/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="stylesheet" href="/styles.css" />
+  <script>
+    // Theme before first paint: the visitor's pick, else the system's.
+    try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+    document.documentElement.classList.add("js");
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <svg class="sprite" aria-hidden="true">
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-github" viewBox="0 0 24 24"><path class="icon-fill" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+    <symbol id="i-gpu" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="9" cy="12" r="2.5"/><path d="M15 10h3M15 14h3M7 18v2M12 18v2M17 18v2"/></symbol>
+    <symbol id="i-scrub" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M10 4v16"/></symbol>
+    <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></symbol>
+    <symbol id="i-audio" viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M15 17l3 3M21 9h-6"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/></symbol>
+  </svg>
+
+  <header class="site-header" id="top">
+    <div class="wrap bar">
+      <a class="brand" href="/" aria-label="Hindsight home"><img src="/img/icon.png" alt="" width="30" height="30" />Hindsight</a>
+      <nav class="nav" aria-label="Sections">
+        <a href="#how">How it works</a>
+        <a href="#performance">Performance</a>
+        <a href="#features">Features</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="bar-end">
+        <button class="icon-btn" id="theme" type="button" aria-label="Switch light or dark theme"><svg class="icon i-moon"><use href="#i-moon"/></svg><svg class="icon i-sun"><use href="#i-sun"/></svg></button>
+        <a class="icon-btn" data-link="repo" href="https://github.com/TheOriUHD/hindsight" aria-label="Hindsight on GitHub"><svg class="icon"><use href="#i-github"/></svg></a>
+        <a class="btn btn-primary btn-sm" data-link="download" href="https://github.com/TheOriUHD/hindsight/releases/latest">Download</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap">
+      <h1>Press a key. Keep the last minute.</h1>
+      <p class="lead">Hindsight records your screen in the background and saves the moment you just had as an MP4. It runs on your GPU, stays out of your game, and never asks you to sign in.</p>
+      <div class="actions">
+        <a class="btn btn-primary" data-link="download" href="https://github.com/TheOriUHD/hindsight/releases/latest"><svg class="icon"><use href="#i-download"/></svg>Download for Windows</a>
+        <a class="btn btn-quiet" data-link="repo" href="https://github.com/TheOriUHD/hindsight"><svg class="icon"><use href="#i-github"/></svg>View on GitHub</a>
+      </div>
+      <p class="fine"><span>Free for personal use</span><span>Windows 10 and 11</span><span>NVIDIA, AMD and Intel</span></p>
+
+      <div class="showcase">
+        <div class="tabs" role="tablist" aria-label="Screens">
+          <button class="tab" role="tab" aria-selected="true" aria-controls="shot-library" id="tab-library">Library</button>
+          <button class="tab" role="tab" aria-selected="false" aria-controls="shot-player" id="tab-player">Player</button>
+          <button class="tab" role="tab" aria-selected="false" aria-controls="shot-settings" id="tab-settings">Settings</button>
+        </div>
+        <p class="tab-note" id="tab-note"><strong>Library.</strong> Every clip in one folder, grouped by day and by game. Hover a thumbnail to scrub through it before you open it.</p>
+        <div class="window">
+          <div role="tabpanel" id="shot-library" aria-labelledby="tab-library"><img src="/img/app-library.webp" alt="Hindsight's clip library: a sidebar with the recorder status and a grid of clips grouped by day" width="2400" height="1500" /></div>
+          <div role="tabpanel" id="shot-player" aria-labelledby="tab-player" hidden><img src="/img/app-player.webp" alt="The clip player with a filmstrip timeline and trim handles" width="2400" height="1500" loading="lazy" /></div>
+          <div role="tabpanel" id="shot-settings" aria-labelledby="tab-settings" hidden><img src="/img/app-settings.webp" alt="Settings for resolution, frame rate, quality, clip length and hotkey" width="2400" height="1500" loading="lazy" /></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <div class="wrap split">
+        <div class="reveal">
+          <h2>It's already recording when something happens.</h2>
+          <p class="lead">There's no record button to remember. Hindsight keeps a rolling buffer of the last seconds, so the clip exists before you knew you wanted it.</p>
+          <ul class="ticks">
+            <li><strong>Always on, mostly idle.</strong> The screen is captured and compressed on the graphics card. What's kept in memory is already a video, not raw frames.</li>
+            <li><strong>One key saves it.</strong> <kbd>F8</kbd> by default, or any combo or mouse side button. It works while a fullscreen game has focus and never takes the key away from the game.</li>
+            <li><strong>Written, not re-encoded.</strong> Saving copies the compressed data into an MP4, so a 4K clip is on disk in about a third of a second, at full quality.</li>
+          </ul>
+        </div>
+        <div class="reveal">
+          <div class="frame overlay-frame"><img src="/img/overlay.webp" alt="A small card at the edge of the screen reading Clip saved" width="1200" height="600" loading="lazy" /></div>
+          <p class="caption">A small card slides out of the screen edge when the clip is saved, with a short sound. It never takes focus and doesn't show up in your recordings.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="performance">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <h2>Built so you can leave it running.</h2>
+          <p class="lead">Frames never leave the GPU. The video encoder on your graphics card (NVENC on NVIDIA, AMF on AMD) does the work, not the cores your game is using. Measured on an RTX 5090 at 4K:</p>
+        </div>
+        <dl class="stats reveal">
+          <div><dt>Frames dropped at 4K, 240 fps</dt><dd>0</dd></div>
+          <div><dt>Time to save a clip</dt><dd>0.3 s</dd></div>
+          <div><dt>CPU while recording 4K at 60 fps</dt><dd>4.5 %<small>of one core</small></dd></div>
+          <div><dt>Hooks injected into your game</dt><dd>None</dd></div>
+        </dl>
+        <div class="trio reveal">
+          <div><h3>Out of the game process</h3><p>Hindsight uses Windows' own screen capture. Nothing is injected into the game, so it doesn't trip anti-cheat.</p></div>
+          <div><h3>Nothing heavy in the background</h3><p>The recorder is a small native process with no browser engine inside. The library window is separate and fully closes when you close it.</p></div>
+          <div><h3>Smooth, not just fast</h3><p>Clips come out at a constant frame rate with audio locked to the same clock, so editors and Discord play them without stutter or drift.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <h2>Everything after the moment, too.</h2>
+          <p class="lead">Find the clip, cut it to the part that matters, and get it under the upload limit, without opening an editor.</p>
+        </div>
+        <div class="cards">
+          <article class="card reveal"><svg class="icon"><use href="#i-scrub"/></svg><h3>Instant scrubbing</h3><p>Every clip carries a small preview track, so dragging along the timeline shows the frame under your cursor immediately, even for 4K at 240 fps.</p></article>
+          <article class="card reveal"><svg class="icon"><use href="#i-cut"/></svg><h3>Trim in place</h3><p>Set in and out points and save a copy. Instant at the nearest keyframe, or frame-accurate with a quick re-encode on the GPU.</p></article>
+          <article class="card reveal"><svg class="icon"><use href="#i-send"/></svg><h3>Export to a size</h3><p>Pick 10, 25 or 50 MB and Hindsight picks the bitrate and resolution so the file fits, as H.264 that plays everywhere.</p></article>
+          <article class="card reveal"><svg class="icon"><use href="#i-audio"/></svg><h3>Separate audio tracks</h3><p>Game and microphone are mixed for sharing and also kept on their own tracks, so you can fix levels later.</p></article>
+          <article class="card reveal"><svg class="icon"><use href="#i-gpu"/></svg><h3>Best codec available</h3><p>AV1 where your card supports it, then HEVC, then H.264. Up to 240 fps, native resolution or scaled down.</p></article>
+          <article class="card reveal"><svg class="icon"><use href="#i-key"/></svg><h3>Your hotkey</h3><p>Any key combination or a mouse side button. Pause from the tray icon when you don't want anything kept.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="privacy">
+      <div class="wrap split">
+        <div class="reveal">
+          <h2>Nothing leaves your PC.</h2>
+          <p class="lead">There is no Hindsight account and no Hindsight server. Clips are ordinary MP4 files in your Videos folder.</p>
+        </div>
+        <div class="reveal">
+          <ul class="plain">
+            <li>No sign-in, no cloud library, no ads, no subscription.</li>
+            <li>No telemetry or analytics. Logs stay in a local folder you can open from Settings.</li>
+            <li>The replay buffer lives in memory and is gone when you quit. Only clips you save are written to disk.</li>
+            <li>Pause recording from the tray, and the hotkey does nothing until you resume.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="start">
+      <div class="wrap">
+        <div class="section-head reveal"><h2>Set up in a minute.</h2></div>
+        <ol class="steps">
+          <li class="reveal"><h3>Install</h3><p>Run the installer. It installs for your user only and doesn't need admin rights. Windows builds aren't code-signed yet, so SmartScreen asks you to confirm the first launch.</p></li>
+          <li class="reveal"><h3>Play</h3><p>Hindsight starts in the tray and records your main display at 60 fps by default. Change resolution, frame rate and clip length in Settings.</p></li>
+          <li class="reveal"><h3>Press <kbd>F8</kbd></h3><p>The last minute is saved to <code>Videos\Hindsight</code>, named after the game you were playing.</p></li>
+        </ol>
+        <div class="cta-row reveal">
+          <a class="btn btn-primary" data-link="download" href="https://github.com/TheOriUHD/hindsight/releases/latest"><svg class="icon"><use href="#i-download"/></svg>Download for Windows</a>
+          <a class="btn btn-quiet" data-link="repo" href="https://github.com/TheOriUHD/hindsight"><svg class="icon"><use href="#i-github"/></svg>Source on GitHub</a>
+        </div>
+        <p class="req reveal"><span class="label">Requires</span> Windows 10 (version 2004) or Windows 11 · a GPU with hardware video encoding: NVIDIA GTX 900 series or newer, AMD RX 400 or newer, or Intel 6th gen or newer</p>
+      </div>
+    </section>
+
+    <section class="section" id="faq">
+      <div class="wrap faq-layout">
+        <div class="reveal">
+          <h2>Questions</h2>
+          <p class="lead">Something missing? Open an issue on <a data-link="issues" href="https://github.com/TheOriUHD/hindsight/issues">GitHub</a>.</p>
+        </div>
+        <div class="faq">
+          <details><summary>Is it safe with anti-cheat?</summary><p>Hindsight doesn't inject anything into games or hook their rendering. It uses the same Windows screen capture any recording or streaming tool can use, and reads your keyboard through Windows' raw input, which doesn't interfere with the game.</p></details>
+          <details><summary>Does it cost anything?</summary><p>No. Hindsight is free for personal and other noncommercial use, with no paid tier and nothing locked. The source is available under the PolyForm Noncommercial license; commercial use needs a separate license.</p></details>
+          <details><summary>How much does it slow my game down?</summary><p>Very little. Encoding runs on the dedicated video engine of your graphics card, and the recorder itself uses a few percent of one CPU core. At very high resolutions and frame rates it automatically uses a faster encoder setting so it keeps up.</p></details>
+          <details><summary>How much memory does it use?</summary><p>The replay buffer holds compressed video, so a minute of 1080p at 60 fps is around 100 MB and a minute of 4K is a few hundred MB. Settings shows the most it can use with your choices. The graphics driver also reserves memory for the encoder, more at 4K.</p></details>
+          <details><summary>Why don't I see the "Clip saved" popup in some games?</summary><p>Games in exclusive fullscreen draw over everything, including the popup. Most games now use borderless or flip-model fullscreen, where it shows. The save sound plays either way.</p></details>
+          <details><summary>Where are my clips?</summary><p>In <code>Videos\Hindsight</code> by default, as normal MP4 files you can open, move or share. You can change the folder in Settings.</p></details>
+          <details><summary>Which games and apps does it record?</summary><p>It records a whole display: whatever is on the screen you choose, game or not. Clips are named after the window that was in front when you pressed the hotkey.</p></details>
+          <details><summary>Why does Windows warn about the installer?</summary><p>The installer isn't code-signed yet, so SmartScreen doesn't recognise it. Choose More info, then Run anyway. The source and the build steps are on GitHub if you'd rather build it yourself.</p></details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="foot">
+        <div>
+          <a class="brand" href="#top"><img src="/img/icon.png" alt="" width="26" height="26" />Hindsight</a>
+          <p class="tagline">Instant replay for Windows. Free for personal use, local, and quiet until you need it.</p>
+        </div>
+        <div>
+          <h3>Product</h3>
+          <ul>
+            <li><a data-link="download" href="https://github.com/TheOriUHD/hindsight/releases/latest">Download</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#faq">FAQ</a></li>
+          </ul>
+        </div>
+        <div>
+          <h3>Project</h3>
+          <ul>
+            <li><a data-link="repo" href="https://github.com/TheOriUHD/hindsight">Source code</a></li>
+            <li><a data-link="issues" href="https://github.com/TheOriUHD/hindsight/issues">Report an issue</a></li>
+            <li><a data-link="releases" href="https://github.com/TheOriUHD/hindsight/releases">Release notes</a></li>
+            <li><a data-link="license" href="https://github.com/TheOriUHD/hindsight/blob/main/LICENSE">License</a></li>
+          </ul>
+        </div>
+      </div>
+      <p class="legal">Hindsight is source-available under the PolyForm Noncommercial License 1.0.0: free to use, read and modify for personal and other noncommercial purposes. It ships FFmpeg libraries under the LGPL 2.1, whose source is available from ffmpeg.org. Hindsight is an independent project and not affiliated with NVIDIA, AMD, Intel or Microsoft. Game imagery in the screenshots comes from the publishers' Steam store pages; the games and their trademarks belong to their owners, who are not affiliated with Hindsight.</p>
+    </div>
+  </footer>
+
+  <script src="/site.js" defer></script>
+</body>
+</html>

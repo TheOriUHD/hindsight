@@ -7,85 +7,165 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="top">
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></symbol>
+      <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></symbol>
+    </defs>
+  </svg>
+
+  <aside class="side">
     <div class="brand">
       <svg viewBox="0 0 64 64" class="logo" aria-hidden="true">
         <path d="M44.5 13.8A22 22 0 1 1 17 15" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round"/>
         <path d="M10 9l12 3-6 10z" fill="var(--accent)"/>
-        <circle cx="32" cy="32" r="8.5" fill="var(--text)"/>
+        <circle cx="32" cy="32" r="8.5" fill="currentColor"/>
       </svg>
-      <span>Hindsight</span>
+      Hindsight
     </div>
-    <nav class="tabs" role="tablist">
-      <button class="tab active" data-view="clips" role="tab">Clips</button>
-      <button class="tab" data-view="settings" role="tab">Settings</button>
+
+    <nav class="nav">
+      <button class="nav-item active" data-view="clips"><svg class="ic"><use href="#i-film"/></svg><span>Clips</span><span class="count" id="nav-count"></span></button>
+      <div class="games" id="games"></div>
+      <button class="nav-item" data-view="settings"><svg class="ic"><use href="#i-gear"/></svg><span>Settings</span></button>
     </nav>
-    <div class="status" id="status" title="">
-      <span class="dot"></span><span id="status-text">Starting…</span>
-    </div>
-    <button class="btn ghost" id="toggle-rec" title="Stops recording until you resume. While paused, the hotkey does nothing.">Pause recording</button>
-    <button class="btn primary" id="save-clip"><span>Save clip</span><kbd id="save-key">F8</kbd></button>
-  </header>
+
+    <section class="rec" id="rec">
+      <div class="rec-state"><span class="dot"></span><span id="rec-state">Starting</span></div>
+      <dl class="rec-meta" id="rec-meta"></dl>
+      <button class="btn primary block" id="save-clip">Save clip<kbd id="save-key">F8</kbd></button>
+      <button class="btn block" id="toggle-rec">Pause recording</button>
+    </section>
+  </aside>
 
   <main>
+    <!-- Library -->
     <section id="view-clips" class="view active">
-      <div class="toolbar">
-        <div class="chips" id="game-chips"></div>
+      <header class="head">
+        <h1 id="clips-title">All clips</h1>
+        <span class="sub" id="clip-count"></span>
         <div class="spacer"></div>
-        <span class="muted" id="clip-count"></span>
-        <button class="btn ghost small" id="open-folder">Open folder</button>
-      </div>
-      <div class="grid" id="grid"></div>
+        <button class="btn" id="open-folder"><svg class="ic"><use href="#i-folder"/></svg>Open folder</button>
+      </header>
+      <div class="days" id="days"></div>
       <div class="empty" id="empty" hidden>
-        <div class="empty-icon">⟲</div>
         <h2>No clips yet</h2>
-        <p>Hindsight is always recording the last <b id="empty-secs">60</b> seconds.<br/>Press <kbd id="empty-key">F8</kbd> in any game to save them.</p>
+        <p>Hindsight keeps the last <b id="empty-secs">60</b> seconds of your screen.<br />Press <kbd id="empty-key">F8</kbd> in a game to save them here.</p>
       </div>
     </section>
 
+    <!-- Player -->
+    <section id="view-player" class="view player">
+      <header class="head">
+        <button class="icon-btn" id="p-back" title="Back to clips (Esc)"><svg class="ic"><use href="#i-back"/></svg></button>
+        <input class="title-edit" id="p-title" spellcheck="false" title="Click to rename" />
+        <span class="sub" id="p-meta"></span>
+        <div class="spacer"></div>
+        <button class="icon-btn" id="p-external" title="Open in default player"><svg class="ic"><use href="#i-external"/></svg></button>
+        <button class="icon-btn" id="p-folder" title="Show in folder"><svg class="ic"><use href="#i-folder"/></svg></button>
+        <button class="icon-btn danger" id="p-delete" title="Move to Recycle Bin"><svg class="ic"><use href="#i-trash"/></svg></button>
+      </header>
+
+      <div class="stage">
+        <div class="frame">
+          <video id="video" preload="auto"></video>
+          <video id="scrub" class="scrub" preload="auto" muted></video>
+          <div class="video-error" id="video-error" hidden>
+            <p>This clip's codec can't be previewed here.</p>
+            <button class="btn" id="p-external2">Open in default player</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="transport">
+        <button class="icon-btn play" id="p-play" title="Play / pause (Space)"><svg class="ic"><use href="#i-play"/></svg></button>
+        <span class="clock"><span id="p-time">0:00.0</span><span class="of"> / <span id="p-dur">0:00.0</span></span></span>
+        <div class="track" id="track">
+          <div class="strip" id="strip"></div>
+          <div class="shade" id="shade-l"></div>
+          <div class="shade" id="shade-r"></div>
+          <div class="sel" id="sel"></div>
+          <div class="handle start" id="h-start" title="In point (I)"></div>
+          <div class="handle end" id="h-end" title="Out point (O)"></div>
+          <div class="playhead" id="playhead"></div>
+        </div>
+      </div>
+
+      <div class="edit-bar">
+        <span class="sub" id="p-range"></span>
+        <div class="spacer"></div>
+        <label class="check" title="Re-encodes so the cut lands on the exact frame. Off: instant, cuts at the nearest keyframe."><input type="checkbox" id="p-exact" /><span></span>Frame-accurate</label>
+        <button class="btn" id="p-trim"><svg class="ic"><use href="#i-cut"/></svg>Save selection</button>
+        <div class="split">
+          <select id="p-size" title="Target file size">
+            <option value="10">10 MB</option>
+            <option value="25">25 MB</option>
+            <option value="50">50 MB</option>
+            <option value="100">100 MB</option>
+            <option value="500">500 MB</option>
+          </select>
+          <button class="btn primary" id="p-export"><svg class="ic"><use href="#i-export"/></svg>Export</button>
+        </div>
+      </div>
+      <p class="keys"><kbd>Space</kbd> play <kbd>I</kbd><kbd>O</kbd> in / out <kbd>←</kbd><kbd>→</kbd> seek <kbd>Esc</kbd> back</p>
+    </section>
+
+    <!-- Settings -->
     <section id="view-settings" class="view">
+      <header class="head">
+        <h1>Settings</h1>
+        <span class="sub" id="saved">Changes apply immediately</span>
+      </header>
       <form id="settings" class="settings" autocomplete="off">
+        <h2>Capture</h2>
         <div class="group">
-          <h3>Capture</h3>
-          <label class="row"><span>Display</span><select name="monitor" id="monitor"></select></label>
-          <label class="row"><span>Resolution</span>
-            <select name="max_height">
-              <option value="0">Native</option>
-              <option value="1440">1440p</option>
-              <option value="1080">1080p</option>
-              <option value="720">720p</option>
-            </select>
-          </label>
-          <label class="row"><span>Frame rate</span>
-            <select name="fps">
-              <option value="30">30 fps</option>
-              <option value="60">60 fps</option>
-              <option value="120">120 fps</option>
-              <option value="144">144 fps</option>
-              <option value="165">165 fps</option>
-              <option value="240">240 fps</option>
-            </select>
-          </label>
-          <label class="row"><span>Codec</span>
+          <div class="row"><div class="lbl">Display<small>The screen that gets recorded.</small></div><select name="monitor" id="monitor"></select></div>
+          <div class="row"><div class="lbl">Resolution<small>Downscaling saves space and encoder time.</small></div>
+            <div class="seg">
+              <label><input type="radio" name="max_height" value="0" /><span>Native</span></label>
+              <label><input type="radio" name="max_height" value="1440" /><span>1440p</span></label>
+              <label><input type="radio" name="max_height" value="1080" /><span>1080p</span></label>
+              <label><input type="radio" name="max_height" value="720" /><span>720p</span></label>
+            </div>
+          </div>
+          <div class="row"><div class="lbl">Frame rate</div>
+            <div class="seg">
+              <label><input type="radio" name="fps" value="30" /><span>30</span></label>
+              <label><input type="radio" name="fps" value="60" /><span>60</span></label>
+              <label><input type="radio" name="fps" value="120" /><span>120</span></label>
+              <label><input type="radio" name="fps" value="144" /><span>144</span></label>
+              <label><input type="radio" name="fps" value="165" /><span>165</span></label>
+              <label><input type="radio" name="fps" value="240" /><span>240</span></label>
+            </div>
+          </div>
+          <div class="row"><div class="lbl">Quality<small id="quality-desc"></small></div>
+            <div class="seg">
+              <label><input type="radio" name="quality" value="balanced" /><span>Balanced</span></label>
+              <label><input type="radio" name="quality" value="high" /><span>High</span></label>
+              <label><input type="radio" name="quality" value="max" /><span>Max</span></label>
+            </div>
+          </div>
+          <div class="row"><div class="lbl">Codec<small>Auto picks the best your GPU supports: AV1, then HEVC, then H.264.</small></div>
             <select name="codec">
-              <option value="auto">Auto (best available)</option>
+              <option value="auto">Auto</option>
               <option value="av1">AV1</option>
-              <option value="hevc">HEVC (H.265)</option>
-              <option value="h264">H.264 (most compatible)</option>
+              <option value="hevc">HEVC</option>
+              <option value="h264">H.264</option>
             </select>
-          </label>
-          <label class="row"><span>Quality</span>
-            <select name="quality">
-              <option value="balanced">Balanced — smaller files</option>
-              <option value="high">High — visually lossless</option>
-              <option value="max">Max — huge files</option>
-            </select>
-          </label>
+          </div>
         </div>
 
+        <h2>Replay</h2>
         <div class="group">
-          <h3>Replay</h3>
-          <label class="row"><span>Clip length</span>
+          <div class="row"><div class="lbl">Clip length<small id="mem-hint"></small></div>
             <select name="buffer_secs">
               <option value="15">15 seconds</option>
               <option value="30">30 seconds</option>
@@ -96,78 +176,31 @@
               <option value="180">3 minutes</option>
               <option value="300">5 minutes</option>
             </select>
-          </label>
-          <div class="row"><span>Save clip hotkey</span><button type="button" class="btn ghost hotkey" id="hotkey">F8</button></div>
-          <p class="hint" id="mem-hint"></p>
+          </div>
+          <div class="row"><div class="lbl">Save clip<small>Keyboard combo or a mouse side button. Works in fullscreen games.</small></div><button type="button" class="btn hotkey" id="hotkey">F8</button></div>
+          <label class="row toggle"><div class="lbl">Sound on save</div><input type="checkbox" name="save_sound" /><i></i></label>
+          <label class="row toggle"><div class="lbl">Popup on save<small>Slides in from the screen edge. Not visible in exclusive fullscreen.</small></div><input type="checkbox" name="save_overlay" /><i></i></label>
         </div>
 
+        <h2>Audio</h2>
         <div class="group">
-          <h3>Audio</h3>
-          <label class="row toggle"><span>Desktop / game audio</span><input type="checkbox" name="desktop_audio" /><i></i></label>
-          <label class="row toggle"><span>Microphone</span><input type="checkbox" name="microphone" /><i></i></label>
-          <p class="hint">With both on, clips get a mixed track plus separate Desktop and Microphone tracks for editing.</p>
+          <label class="row toggle"><div class="lbl">Desktop audio<small>Everything you hear, including the game.</small></div><input type="checkbox" name="desktop_audio" /><i></i></label>
+          <label class="row toggle"><div class="lbl">Microphone<small>Adds a mixed track plus separate desktop and mic tracks.</small></div><input type="checkbox" name="microphone" /><i></i></label>
         </div>
 
+        <h2>Storage</h2>
         <div class="group">
-          <h3>Storage &amp; app</h3>
-          <div class="row"><span>Clips folder</span><span class="path" id="out-dir"></span><button type="button" class="btn ghost small" id="pick-dir">Change…</button></div>
-          <label class="row toggle"><span>Start with Windows</span><input type="checkbox" name="start_with_windows" /><i></i></label>
-          <label class="row toggle"><span>Play a sound when a clip is saved</span><input type="checkbox" name="save_sound" /><i></i></label>
-          <label class="row toggle"><span>Show a "Clip saved" popup on screen</span><input type="checkbox" name="save_overlay" /><i></i></label>
+          <div class="row"><div class="lbl">Clips folder<small class="path" id="out-dir"></small></div><button type="button" class="btn" id="pick-dir">Change</button></div>
+          <label class="row toggle"><div class="lbl">Start with Windows<small>Starts quietly in the tray.</small></div><input type="checkbox" name="start_with_windows" /><i></i></label>
         </div>
-        <p class="saved" id="saved">Saved</p>
+
+        <h2>About</h2>
+        <div class="group">
+          <div class="row"><div class="lbl">Hindsight <span id="version"></span><small>No accounts, no uploads. Encoding by FFmpeg (LGPL 2.1).</small></div><button type="button" class="btn" id="open-logs">Open logs</button></div>
+        </div>
       </form>
     </section>
   </main>
-
-  <div class="player" id="player" hidden>
-    <div class="player-inner">
-      <div class="player-head">
-        <input class="title-edit" id="p-title" spellcheck="false" />
-        <div class="spacer"></div>
-        <button class="btn ghost small" id="p-external">Open in player</button>
-        <button class="btn ghost small" id="p-folder">Show in folder</button>
-        <button class="btn danger small" id="p-delete">Delete</button>
-        <button class="icon-btn" id="p-close" title="Close (Esc)">✕</button>
-      </div>
-      <div class="video-wrap">
-        <video id="video" preload="auto"></video>
-        <video id="scrub" class="scrub" preload="auto" muted></video>
-        <div class="video-error" id="video-error" hidden>
-          <p>This clip's codec can't be previewed here.</p>
-          <button class="btn ghost small" id="p-external2">Open in default player</button>
-        </div>
-      </div>
-      <div class="timeline">
-        <button class="icon-btn play" id="p-play" title="Play/pause (Space)">▶</button>
-        <span class="time" id="p-time">0:00.0</span>
-        <div class="track" id="track">
-          <div class="sel" id="sel"></div>
-          <div class="handle start" id="h-start" title="Trim start (I)"></div>
-          <div class="handle end" id="h-end" title="Trim end (O)"></div>
-          <div class="playhead" id="playhead"></div>
-        </div>
-        <span class="time" id="p-dur">0:00.0</span>
-      </div>
-      <div class="actions">
-        <span class="muted" id="p-range"></span>
-        <div class="spacer"></div>
-        <label class="check"><input type="checkbox" id="p-exact" /> Frame-exact</label>
-        <button class="btn ghost" id="p-trim">Save trimmed copy</button>
-        <div class="split">
-          <select id="p-size">
-            <option value="10">≤ 10 MB (Discord)</option>
-            <option value="25">≤ 25 MB</option>
-            <option value="50">≤ 50 MB</option>
-            <option value="100">≤ 100 MB</option>
-            <option value="500">≤ 500 MB</option>
-          </select>
-          <button class="btn primary" id="p-export">Export</button>
-        </div>
-      </div>
-      <p class="hint keys">Space play · I / O set trim · ← → seek · Esc close</p>
-    </div>
-  </div>
 
   <div class="toast" id="toast" hidden><span id="toast-text"></span><div class="bar"><i id="toast-bar"></i></div></div>
 

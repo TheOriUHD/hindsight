@@ -78,6 +78,7 @@ pub fn list(dir: &Path, on_thumb: impl Fn(PathBuf, PathBuf) + Send + Sync + 'sta
         });
     }
     out.sort_by(|a, b| b.created.cmp(&a.created));
+    prune_cache(&out);
     let missing: Vec<_> = out.iter().filter(|c| c.thumb.is_none()).map(|c| (c.path.clone(), thumb_path(&c.path, c.created))).collect();
     if !missing.is_empty() {
         let cb = std::sync::Arc::new(on_thumb);
@@ -87,6 +88,25 @@ pub fn list(dir: &Path, on_thumb: impl Fn(PathBuf, PathBuf) + Send + Sync + 'sta
         }
     }
     out
+}
+
+/// Drop cached thumbnails and scrub proxies whose clip is gone (deleted or
+/// renamed outside the app).
+fn prune_cache(clips: &[ClipInfo]) {
+    let keep_thumbs: std::collections::HashSet<PathBuf> = clips.iter().map(|c| thumb_path(&c.path, c.created)).collect();
+    let keep_scrub: std::collections::HashSet<PathBuf> =
+        clips.iter().flat_map(|c| [hindsight_recorder::scrub_path(&c.path), strip_path(&c.path)]).collect();
+    for (dir, keep) in [(thumbs_dir(), &keep_thumbs), (hindsight_recorder::data_dir().join("scrub"), &keep_scrub)] {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            let stale = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|a| a.as_secs() > 60).unwrap_or(false);
+            // Skip in-progress files (tmp) and anything brand new.
+            if stale && !keep.contains(&p) && !p.to_string_lossy().ends_with(".tmp.mp4") {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
 }
 
 type ThumbJob = (PathBuf, PathBuf, Box<dyn FnOnce(PathBuf, PathBuf) + Send>);
@@ -266,11 +286,14 @@ pub fn export_for_size(src: &Path, start: f64, end: f64, target_mb: f64, recordi
 /// The 360p all-keyframe copy the player scrubs through. The recorder writes
 /// one with every clip; for older clips and trims it's built here in the
 /// background (low priority) and `on_ready` fires when done.
-pub fn scrub_proxy(clip: &Path, recording_encoder: &str, on_ready: impl FnOnce(PathBuf, PathBuf) + Send + 'static) -> Option<PathBuf> {
+pub fn scrub_proxy(clip: &Path, generate: bool, recording_encoder: &str, on_ready: impl FnOnce(PathBuf, PathBuf) + Send + 'static) -> Option<PathBuf> {
     let proxy = hindsight_recorder::scrub_path(clip);
     let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
     if proxy.exists() && modified(&proxy) >= modified(clip) {
         return Some(proxy);
+    }
+    if !generate {
+        return None;
     }
     let (clip, enc) = (clip.to_path_buf(), h264_encoder(recording_encoder));
     std::thread::spawn(move || {
@@ -279,11 +302,11 @@ pub fn scrub_proxy(clip: &Path, recording_encoder: &str, on_ready: impl FnOnce(P
         let _ = std::fs::create_dir_all(proxy.parent().unwrap());
         let tmp = proxy.with_extension("tmp.mp4");
         let mut args: Vec<String> = vec!["-v".into(), "error".into(), "-y".into(), "-hwaccel".into(), "auto".into(), "-i".into(), clip.to_string_lossy().into()];
-        args.extend(["-an", "-vf", "fps=30,scale=-2:360", "-c:v", enc, "-g", "1", "-bf", "0"].map(String::from));
+        args.extend(["-an", "-vf", "fps=20,scale=-2:360", "-c:v", enc, "-g", "1", "-bf", "0"].map(String::from));
         if enc == "h264_nvenc" {
-            args.extend(["-preset", "p1", "-rc", "constqp", "-qp", "30"].map(String::from));
+            args.extend(["-preset", "p1", "-rc", "constqp", "-qp", "34"].map(String::from));
         } else {
-            args.extend(["-b:v", "6M"].map(String::from));
+            args.extend(["-b:v", "2500k"].map(String::from));
         }
         args.extend(["-movflags".into(), "+faststart".into(), tmp.to_string_lossy().into()]);
         const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x4000;
@@ -302,9 +325,39 @@ pub fn scrub_proxy(clip: &Path, recording_encoder: &str, on_ready: impl FnOnce(P
     None
 }
 
+pub const STRIP_TILES: u32 = 32;
+
+fn strip_path(clip: &Path) -> PathBuf {
+    hindsight_recorder::scrub_path(clip).with_extension("strip.jpg")
+}
+
+/// 32 thumbnails side by side (160x90 each) for the player's timeline, cut
+/// from the scrub proxy. Every proxy frame is a keyframe, so this is quick.
+pub fn filmstrip(clip: &Path) -> Option<PathBuf> {
+    let proxy = hindsight_recorder::scrub_path(clip);
+    let out = strip_path(clip);
+    let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    if out.exists() && modified(&out) >= modified(&proxy) {
+        return Some(out);
+    }
+    let dur = hindsight_encode::probe_duration(&proxy)?.max(0.1);
+    let tmp = out.with_extension("tmp.jpg");
+    let ok = Command::new(ffmpeg_exe())
+        .args(["-v", "error", "-y", "-i"])
+        .arg(&proxy)
+        .args(["-vf", &format!("fps={}/{dur:.3},scale=160:90,tile={}x1", STRIP_TILES, STRIP_TILES), "-frames:v", "1", "-q:v", "4"])
+        .arg(&tmp)
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    (ok && std::fs::rename(&tmp, &out).is_ok()).then_some(out)
+}
+
 pub fn delete(clip: &Path) -> Result<()> {
     trash::delete(clip)?;
     let _ = std::fs::remove_file(hindsight_recorder::scrub_path(clip));
+    let _ = std::fs::remove_file(strip_path(clip));
     Ok(())
 }
 
@@ -320,5 +373,6 @@ pub fn rename(src: &Path, new_name: &str) -> Result<PathBuf> {
     }
     std::fs::rename(src, &dst)?;
     let _ = std::fs::rename(hindsight_recorder::scrub_path(src), hindsight_recorder::scrub_path(&dst));
+    let _ = std::fs::remove_file(strip_path(src));
     Ok(dst)
 }

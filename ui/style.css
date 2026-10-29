@@ -129,6 +129,9 @@ select:focus-visible, .btn:focus-visible, .title-edit:focus, .seg input:focus-vi
 .rec-meta dd { margin: 0; color: var(--text-2); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rec-msg { color: var(--text-3); font-size: 12px; margin: 0 0 6px; }
 .rec #save-clip kbd { margin-left: auto; }
+.credit { padding: 12px 6px 0; color: var(--text-3); font-size: 11.5px; }
+.credit a, .lbl small a { color: var(--text-2); text-decoration: none; }
+.credit a:hover, .lbl small a:hover { color: var(--text); text-decoration: underline; }
 .rec #save-clip { justify-content: flex-start; }
 
 /* ---------- main / views ---------- */

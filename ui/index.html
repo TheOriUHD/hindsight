@@ -44,6 +44,7 @@
       <button class="btn primary block" id="save-clip">Save clip<kbd id="save-key">F8</kbd></button>
       <button class="btn block" id="toggle-rec">Pause recording</button>
     </section>
+    <footer class="credit">&copy; 2026 <a href="#" data-url="https://github.com/TheOriUHD">TheOriUHD</a></footer>
   </aside>
 
   <main>
@@ -228,7 +229,16 @@
 
         <h2>About</h2>
         <div class="group">
-          <div class="row"><div class="lbl">Hindsight <span id="version"></span><small>No accounts, no uploads. Encoding by FFmpeg (LGPL 2.1).</small></div><button type="button" class="btn" id="open-logs">Open logs</button></div>
+          <div class="row"><div class="lbl">Hindsight <span id="version"></span>
+              <small>&copy; 2026 <a href="#" data-url="https://github.com/TheOriUHD">TheOriUHD</a>. No accounts, no uploads.</small>
+            </div>
+            <button type="button" class="btn" data-url="https://github.com/TheOriUHD/hindsight">GitHub</button>
+            <button type="button" class="btn" data-url="https://hindsighthq.app">Website</button>
+          </div>
+          <div class="row"><div class="lbl">License<small>Free for personal and other noncommercial use (PolyForm Noncommercial 1.0.0). Video encoding by FFmpeg under the LGPL 2.1.</small></div>
+            <button type="button" class="btn" data-url="https://github.com/TheOriUHD/hindsight/blob/main/LICENSE">License</button>
+          </div>
+          <div class="row"><div class="lbl">Logs<small>For bug reports. Nothing is ever sent anywhere.</small></div><button type="button" class="btn" id="open-logs">Open logs</button></div>
         </div>
       </form>
     </section>

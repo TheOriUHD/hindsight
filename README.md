@@ -233,6 +233,7 @@ Built on [Tauri](https://tauri.app), [windows-rs](https://github.com/microsoft/w
 
 <br>
 
-<sub>Hindsight · instant replay for Windows · press a key, keep the last minute</sub>
+<sub>Hindsight · instant replay for Windows · press a key, keep the last minute</sub><br>
+<sub>© 2026 <a href="https://github.com/TheOriUHD">TheOriUHD</a></sub>
 
 </div>

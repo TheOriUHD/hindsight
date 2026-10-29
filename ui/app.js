@@ -860,6 +860,14 @@ $("#pick-dir").onclick = async () => {
 };
 $("#open-logs").onclick = () => invoke("open_logs");
 
+// External links open in the default browser (the webview never navigates away).
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("[data-url]");
+  if (!a) return;
+  e.preventDefault();
+  invoke("open_url", { url: a.dataset.url });
+});
+
 /* Hotkey capture: keyboard combos or mouse side buttons. */
 const MODS = ["Control", "Alt", "Shift", "Meta"];
 function keyName(e) {

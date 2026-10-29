@@ -113,6 +113,18 @@ async fn filmstrip(path: PathBuf) -> Option<PathBuf> {
     tauri::async_runtime::spawn_blocking(move || clips::filmstrip(&path)).await.ok().flatten()
 }
 
+/// Open one of our own links in the default browser. Only known hosts, so a
+/// page can't use this to launch arbitrary things.
+#[tauri::command]
+fn open_url(url: String) -> Res<()> {
+    let allowed = ["https://github.com/TheOriUHD", "https://hindsighthq.app"];
+    if !allowed.iter().any(|p| url == *p || url.starts_with(&format!("{p}/"))) {
+        return Err("link not allowed".into());
+    }
+    system::open_with_default(std::path::Path::new(&url));
+    Ok(())
+}
+
 #[tauri::command]
 fn cancel_job() {
     clips::cancel_job();
@@ -346,6 +358,7 @@ pub fn run(mode: Mode) {
             audio_apps,
             open_full_app,
             cancel_job,
+            open_url,
             popout_ready,
             close_popout,
             rename_clip,

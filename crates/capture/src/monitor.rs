@@ -24,6 +24,7 @@ unsafe impl Sync for Monitor {}
 
 /// All monitors attached to the desktop, primary first.
 pub fn monitors() -> Result<Vec<Monitor>> {
+    crate::ensure_mta();
     let mut out = Vec::new();
     unsafe {
         // Without this, DXGI reports DPI-virtualized sizes (4K at 150% -> 2560x1440).

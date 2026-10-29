@@ -95,8 +95,17 @@ pub fn probe_duration(path: &Path) -> Option<f64> {
         if ff::avformat_open_input(&mut ic, cpath.as_ptr(), ptr::null(), ptr::null_mut()) < 0 {
             return None;
         }
-        let d = (*ic).duration;
+        // Without avformat_find_stream_info (slow) only per-stream durations from
+        // the moov atom are known.
+        let mut d = 0.0f64;
+        for i in 0..(*ic).nb_streams as usize {
+            let s = *(*ic).streams.add(i);
+            if (*s).duration > 0 {
+                let tb = (*s).time_base;
+                d = d.max((*s).duration as f64 * tb.num as f64 / tb.den as f64);
+            }
+        }
         ff::avformat_close_input(&mut ic);
-        (d > 0).then(|| d as f64 / 1e6)
+        (d > 0.0).then_some(d)
     }
 }

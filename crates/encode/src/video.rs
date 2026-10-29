@@ -156,6 +156,14 @@ impl VideoEncoder {
             } else {
                 vec![("hw_encoding", "1".into()), ("rate_control", "quality".into())]
             };
+            let mut opts = opts;
+            if let Ok(extra) = std::env::var("HINDSIGHT_ENC_OPTS") {
+                for kv in extra.split(',').filter(|s| !s.is_empty()) {
+                    if let Some((k, v)) = kv.split_once('=') {
+                        opts.push((Box::leak(k.to_string().into_boxed_str()), v.to_string()));
+                    }
+                }
+            }
             for (k, v) in &opts {
                 let (k, v) = (CString::new(*k)?, CString::new(v.as_str())?);
                 ff::av_opt_set(c.priv_data, k.as_ptr(), v.as_ptr(), 0);

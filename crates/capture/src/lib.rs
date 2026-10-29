@@ -19,6 +19,17 @@ use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 pub use device::GpuDevice;
 pub use monitor::{monitors, Monitor};
 
+/// Keep the process-wide multithreaded COM apartment alive for the life of
+/// the process. Without this, the MTA is torn down when the last thread that
+/// joined it exits, and cached WinRT factories (capture, ApiInformation)
+/// become dangling pointers.
+pub fn ensure_mta() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| unsafe {
+        let _ = windows::Win32::System::Com::CoIncrementMTAUsage();
+    });
+}
+
 /// A captured frame. The texture is only valid until the callback returns.
 pub struct Frame<'a> {
     pub texture: &'a ID3D11Texture2D,
@@ -38,6 +49,7 @@ impl Backend {
     /// WGC throttles to ~60 fps unless `MinUpdateInterval` exists, so only pick it
     /// where it can run at the display's full refresh rate.
     pub fn auto() -> Self {
+        ensure_mta();
         if wgc::supports_uncapped() { Backend::Wgc } else { Backend::Dxgi }
     }
 }

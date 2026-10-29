@@ -27,6 +27,7 @@ use replay::Replay;
 
 #[derive(Clone, Debug, Serialize, Default)]
 pub struct Status {
+    pub enabled: bool,
     pub recording: bool,
     pub error: Option<String>,
     pub encoder: String,
@@ -125,11 +126,10 @@ impl VideoState {
 }
 
 struct Session {
-    // Field order = drop order: stop capture callbacks before the encoder goes away.
-    _capture: Capture,
+    capture: Option<Capture>,
     pacer_stop: Arc<AtomicBool>,
     pacer: Option<JoinHandle<()>>,
-    _audio: Option<AudioPipeline>,
+    audio: Option<AudioPipeline>,
     video: Arc<Mutex<VideoState>>,
     replay: Arc<Mutex<Replay>>,
     params: Arc<Vec<StreamParams>>,
@@ -140,10 +140,17 @@ struct Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        // Stop capture callbacks first, then the pacer, so nothing touches the
+        // encoder while it is torn down.
+        log::info!("stopping capture");
+        drop(self.capture.take());
         self.pacer_stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.pacer.take() {
             let _ = t.join();
         }
+        log::info!("stopping audio");
+        drop(self.audio.take());
+        log::info!("session stopped");
     }
 }
 
@@ -224,10 +231,10 @@ fn open_session(s: &Settings) -> Result<Session> {
     };
     log::info!("recording {} {}x{}@{} via {} on {}", mon.name, w, h, s.fps, status.encoder, gpu.adapter_name);
     Ok(Session {
-        _capture: capture,
+        capture: Some(capture),
         pacer_stop,
         pacer: Some(pacer),
-        _audio: audio,
+        audio,
         video,
         replay,
         params: Arc::new(params),
@@ -238,6 +245,7 @@ fn open_session(s: &Settings) -> Result<Session> {
 }
 
 pub struct Recorder {
+    lifecycle: Mutex<()>,
     session: Mutex<Option<Session>>,
     settings: Mutex<Settings>,
     error: Mutex<Option<String>>,
@@ -248,6 +256,7 @@ pub struct Recorder {
 impl Recorder {
     pub fn new(settings: Settings, on_clip: impl Fn(&Path) + Send + Sync + 'static) -> Arc<Self> {
         let rec = Arc::new(Self {
+            lifecycle: Mutex::new(()),
             session: Mutex::new(None),
             settings: Mutex::new(settings.clone()),
             error: Mutex::new(None),
@@ -270,15 +279,19 @@ impl Recorder {
 
     /// Start recording if enabled in settings. Errors are kept in the status.
     pub fn start(&self) {
+        // Serialize restarts, but never hold `session` while tearing down or
+        // opening one, so status queries stay responsive.
+        let _lifecycle = self.lifecycle.lock().unwrap();
         let s = self.settings();
-        let mut session = self.session.lock().unwrap();
-        *session = None;
+        let old = self.session.lock().unwrap().take();
+        drop(old);
         if !s.enabled {
             return;
         }
+        log::info!("starting session");
         match open_session(&s) {
             Ok(sess) => {
-                *session = Some(sess);
+                *self.session.lock().unwrap() = Some(sess);
                 *self.error.lock().unwrap() = None;
             }
             Err(e) => {
@@ -289,7 +302,9 @@ impl Recorder {
     }
 
     pub fn stop(&self) {
-        *self.session.lock().unwrap() = None;
+        let _lifecycle = self.lifecycle.lock().unwrap();
+        let old = self.session.lock().unwrap().take();
+        drop(old);
     }
 
     pub fn set_enabled(&self, enabled: bool) -> Result<()> {
@@ -336,6 +351,7 @@ impl Recorder {
             None => Status { error: self.error.lock().unwrap().clone(), ..Default::default() },
         };
         st.last_clip = self.last_clip.lock().unwrap().clone();
+        st.enabled = self.settings.lock().unwrap().enabled;
         st
     }
 

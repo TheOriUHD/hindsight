@@ -1,0 +1,30 @@
+[package]
+name = "hindsight"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hindsight — instant replay clipping"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log = { version = "0.4", features = ["std"] }
+tauri = { version = "2", features = ["tray-icon", "protocol-asset", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+trash = "5"
+winreg = "0.55"
+hindsight-recorder = { path = "../crates/recorder" }
+hindsight-encode = { path = "../crates/encode" }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_UI_WindowsAndMessaging",
+] }

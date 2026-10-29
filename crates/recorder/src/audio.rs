@@ -49,7 +49,8 @@ impl Timeline {
             self.start = idx;
             self.started = true;
         }
-        let missing = idx - self.end();
+        // Never pad more than a few seconds at once, whatever a driver reports.
+        let missing = (idx - self.end()).min(SAMPLE_RATE * 5);
         if missing > 0 {
             self.data.extend(std::iter::repeat(0.0).take(missing as usize * CH));
         }
@@ -77,6 +78,7 @@ impl Timeline {
 }
 
 struct Source {
+    kind: SourceKind,
     timeline: Arc<Mutex<Timeline>>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -106,7 +108,7 @@ impl Source {
                 }
             })
             .expect("spawn audio thread");
-        Self { timeline, stop, thread: Some(thread) }
+        Self { kind, timeline, stop, thread: Some(thread) }
     }
 }
 
@@ -114,6 +116,7 @@ impl Drop for Source {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.thread.take() {
+            log::info!("joining {:?} audio thread", self.kind);
             let _ = t.join();
         }
     }
@@ -192,7 +195,13 @@ fn run_source(kind: SourceKind, origin: i64, timeline: &Mutex<Timeline>, stop: &
                 let mut bflags = 0u32;
                 let mut qpc = 0u64;
                 capture.GetBuffer(&mut data, &mut frames, &mut bflags, None, Some(&mut qpc))?;
-                let at = sample_at(qpc as i64, origin);
+                // Some drivers (often microphones) report 0 or garbage QPC
+                // positions; fall back to "this packet just ended now".
+                let now = sample_at(now_100ns(), origin);
+                let mut at = sample_at(qpc as i64, origin);
+                if qpc == 0 || (at - now).abs() > SAMPLE_RATE {
+                    at = now - frames as i64;
+                }
                 {
                     let mut t = timeline.lock().unwrap();
                     if !t.started || at > t.end() + SAMPLE_RATE / 100 {

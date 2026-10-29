@@ -2,3 +2,5 @@
 *.mp4
 /vendor
 /node_modules
+/app/gen
+/dist

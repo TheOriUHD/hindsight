@@ -127,7 +127,8 @@ impl Settings {
     }
 }
 
-/// %LOCALAPPDATA%\Hindsight
+/// Settings, logs and thumbnails: %LOCALAPPDATA%\app.hindsight.clips (the
+/// installer owns %LOCALAPPDATA%\Hindsight, so user data stays out of it).
 pub fn data_dir() -> PathBuf {
-    dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("Hindsight")
+    dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("app.hindsight.clips")
 }

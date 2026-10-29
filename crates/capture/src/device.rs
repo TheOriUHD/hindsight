@@ -31,6 +31,7 @@ unsafe impl Sync for GpuDevice {}
 impl GpuDevice {
     pub fn for_monitor(monitor: &Monitor) -> Result<Self> {
         unsafe {
+            crate::ensure_mta();
             // Apartment just needs to exist; "already initialized" is fine.
             let _ = RoInitialize(RO_INIT_MULTITHREADED);
 

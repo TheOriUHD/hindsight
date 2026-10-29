@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/capture", "crates/encode", "crates/recorder"]
+members = ["crates/capture", "crates/encode", "crates/recorder", "app"]
 
 [workspace.package]
 version = "0.1.0"

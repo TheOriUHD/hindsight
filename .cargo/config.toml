@@ -1,0 +1,7 @@
+[env]
+# Points ffmpeg-sys-next at the vendored LGPL shared build (fetched by scripts/setup.ps1).
+FFMPEG_DIR = { value = "vendor/ffmpeg", relative = true }
+# bindgen needs libclang; a local copy avoids requiring a system LLVM install.
+LIBCLANG_PATH = { value = "vendor/libclang", relative = true }
+# The pip libclang build defaults to a MinGW target; FFmpeg headers must be parsed as MSVC.
+BINDGEN_EXTRA_CLANG_ARGS = "--target=x86_64-pc-windows-msvc -fms-compatibility -fms-extensions"

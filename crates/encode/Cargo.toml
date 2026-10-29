@@ -1,0 +1,16 @@
+[package]
+name = "hindsight-encode"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ffmpeg-sys-next.workspace = true
+hindsight-capture = { path = "../capture" }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }

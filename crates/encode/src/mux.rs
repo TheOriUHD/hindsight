@@ -18,7 +18,9 @@ pub struct Mp4Writer {
 }
 
 impl Mp4Writer {
-    pub fn create(path: &Path, params: &[&StreamParams]) -> Result<Self> {
+    /// `packets` is how many packets will be written, used to reserve room for
+    /// the index (moov) at the front of the file.
+    pub fn create(path: &Path, params: &[&StreamParams], packets: usize) -> Result<Self> {
         let cpath = CString::new(path.to_string_lossy().as_bytes())?;
         unsafe {
             let mut oc = ptr::null_mut();
@@ -39,9 +41,15 @@ impl Mp4Writer {
             }
             check(ff::avio_open(&mut (*oc).pb, cpath.as_ptr(), ff::AVIO_FLAG_WRITE), "avio_open")?;
 
-            // Moov atom up front so clips start playing instantly in browsers/Discord.
+            // The index (moov) goes up front so clips start playing instantly in
+            // browsers and Discord. Reserving its space before the data avoids
+            // +faststart's second pass, which rewrites the whole file (seconds
+            // for a 4K240 clip). ~40 bytes per sample is generous: the index
+            // stores a size, offset, timing and sync entry per packet.
+            let reserve = (packets * 40 + 256 * 1024).to_string();
+            let reserve = CString::new(reserve)?;
             let mut opts = ptr::null_mut();
-            ff::av_dict_set(&mut opts, c"movflags".as_ptr(), c"+faststart".as_ptr(), 0);
+            ff::av_dict_set(&mut opts, c"moov_size".as_ptr(), reserve.as_ptr(), 0);
             let r = ff::avformat_write_header(oc, &mut opts);
             ff::av_dict_free(&mut opts);
             check(r, "avformat_write_header")?;

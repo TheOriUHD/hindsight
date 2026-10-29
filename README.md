@@ -37,7 +37,7 @@ No account, no uploads, no overlay injected into your games.
 Clipping tools tend to grow accounts, feeds, cloud uploads and an Electron window that sits next to your game. Hindsight does one thing: it keeps the last few seconds or minutes of your screen and saves them when you ask.
 
 - **Always on, nearly free.** Frames go from the screen to the GPU's video encoder without ever being copied to the CPU. The recorder process doesn't load a browser engine.
-- **Instant saves.** A clip is cut from what is already encoded, so saving a minute of 4K takes about a third of a second, with no re-encode.
+- **Instant saves.** The popup confirms the moment you press the key. The clip is cut from what is already encoded and written in one pass, with no re-encode.
 - **Your files.** Clips are plain MP4s in `Videos\Hindsight`. Nothing leaves your PC.
 
 <br>
@@ -167,7 +167,8 @@ Measured on a Ryzen 9 9950X3D2 with an RTX 5090, recording a 3840×2160 display:
 |---|---|
 | Recorder CPU at 4K60 | about 4.5% of one core |
 | 4K at 240 fps | 0 dropped frames (encoder preset scales with pixel rate) |
-| Saving a 4K clip | about 0.3 s |
+| Popup after the key press | instant |
+| Writing a 30 s 4K240 clip (111 MB) | about 0.35 s, including 0.3 s of deliberate wait for trailing audio |
 | Trimmed copy, keyframe cut | about 0.1 s |
 | Scrubbing a frame | about 2 ms |
 | Memory | the replay buffer (Settings shows the maximum) plus about 0.5 GB the NVIDIA driver reserves for a 4K encoder session |

@@ -75,7 +75,7 @@ fn write_scrub(clip: &Path, packets: &[Packet], base: i64, params: &StreamParams
     }
     let path = scrub_path(clip);
     std::fs::create_dir_all(path.parent().unwrap())?;
-    let mut w = Mp4Writer::create(&path, &[params])?;
+    let mut w = Mp4Writer::create(&path, &[params], packets.len())?;
     for p in packets {
         w.write(&Packet { stream: 0, ..p.clone() }, base)?;
     }
@@ -493,18 +493,38 @@ impl Recorder {
         let t = Instant::now();
         let title = feedback::foreground_title();
         let pressed = now_100ns();
+        let settings = self.settings();
+
+        // The moment is already safe in memory, so confirm right away; writing
+        // a big 4K file can take a second and the popup shouldn't wait for it.
+        // A failure afterwards shows "Clip not saved" instead.
+        let (monitor, secs) = {
+            let session = self.session.lock().unwrap();
+            let s = session.as_ref().context("Recording is paused")?;
+            let r = s.replay.lock().unwrap();
+            if r.bytes() == 0 {
+                anyhow::bail!("Nothing recorded yet");
+            }
+            (s.monitor_handle, r.span_secs().min(s.clip_us as f64 / 1e6))
+        };
+        if settings.save_sound {
+            feedback::play_chime();
+        }
+        if settings.save_overlay {
+            overlay::show(overlay::Kind::Saved, &format!("{title} · {secs:.0}s"), monitor);
+        }
+
         // The clip ends at the key press; give the audio mixer (200 ms behind)
         // and the encoder's lookahead time to deliver that moment.
         std::thread::sleep(Duration::from_millis(300));
-        let (packets, base, params, scrub, monitor) = {
+        let (packets, base, params, scrub) = {
             let session = self.session.lock().unwrap();
-            let s = session.as_ref().context("Recording is paused")?;
+            let s = session.as_ref().context("Recording stopped while saving")?;
             let end = (pressed - s.origin) / 10;
             let (packets, base) = s.replay.lock().unwrap().snapshot(s.clip_us, end).context("Nothing recorded yet")?;
             let scrub = s.scrub_params.clone().map(|p| (s.scrub_replay.lock().unwrap().range(base, end), p));
-            (packets, base, s.params.clone(), scrub, s.monitor_handle)
+            (packets, base, s.params.clone(), scrub)
         };
-        let settings = self.settings();
         std::fs::create_dir_all(&settings.output_dir)?;
         let stamp = chrono::Local::now().format("%Y-%m-%d %H-%M-%S");
         let mut path = settings.output_dir.join(format!("{title} {stamp}.mp4"));
@@ -514,19 +534,13 @@ impl Recorder {
             n += 1;
         }
         let refs: Vec<&StreamParams> = params.iter().collect();
-        let mut w = Mp4Writer::create(&path, &refs)?;
+        let bytes: usize = packets.iter().map(|p| p.data.len()).sum();
+        let mut w = Mp4Writer::create(&path, &refs, packets.len())?;
         for p in &packets {
             w.write(p, base)?;
         }
         w.finish()?;
-        log::info!("clip written in {} ms", t.elapsed().as_millis());
-        if settings.save_sound {
-            feedback::play_chime();
-        }
-        if settings.save_overlay {
-            let secs = packets.iter().filter(|p| p.stream == 0).map(|p| p.pts).max().map(|e| (e - base) as f64 / 1e6).unwrap_or(0.0);
-            overlay::show(overlay::Kind::Saved, &format!("{} · {:.0}s", title, secs), monitor);
-        }
+        log::info!("clip written in {} ms ({:.0} MB)", t.elapsed().as_millis(), bytes as f64 / 1e6);
         if let Some((sp, params)) = scrub {
             if let Err(e) = write_scrub(&path, &sp, base, &params) {
                 log::warn!("scrub proxy: {e:#}");

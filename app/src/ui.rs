@@ -204,9 +204,32 @@ async fn open_full_app(handle: AppHandle) -> Res<()> {
 
 /// The popout page calls this once it has rendered, so it never flashes empty.
 #[tauri::command]
-fn popout_ready(window: tauri::WebviewWindow) {
+fn popout_ready(window: tauri::WebviewWindow, handle: AppHandle) {
     let _ = window.show();
+    // A freshly started process isn't allowed to take the foreground after a
+    // tray click; borrow it from whoever has it so keyboard input (Esc) works.
+    if let Ok(hwnd) = window.hwnd() {
+        system::force_foreground(hwnd.0 as isize);
+    }
     let _ = window.set_focus();
+    if std::env::var_os("HINDSIGHT_POPOUT_PERSIST").is_some() {
+        return;
+    }
+    // Close on any click outside the popout, like a Windows flyout. This
+    // doesn't depend on focus, which Windows may still refuse to give us.
+    let Ok(hwnd) = window.hwnd() else { return };
+    let hwnd = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        // Ignore the button that's still down from the tray click itself.
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            if system::clicked_outside(hwnd) {
+                handle.exit(0);
+                return;
+            }
+        }
+    });
 }
 
 #[tauri::command]
@@ -275,9 +298,15 @@ pub fn run(mode: Mode) {
                     // (HINDSIGHT_POPOUT_PERSIST=1 keeps it open for debugging.)
                     let h = handle.clone();
                     let persist = std::env::var_os("HINDSIGHT_POPOUT_PERSIST").is_some();
+                    let had_focus = std::sync::atomic::AtomicBool::new(false);
                     w.on_window_event(move |ev| {
+                        if let tauri::WindowEvent::Focused(true) = ev {
+                            had_focus.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
                         if let tauri::WindowEvent::Focused(false) = ev {
-                            if persist {
+                            // Never had focus (Windows refused it): the outside-click
+                            // watcher closes the popout instead.
+                            if persist || !had_focus.load(std::sync::atomic::Ordering::Relaxed) {
                                 return;
                             }
                             let h = h.clone();

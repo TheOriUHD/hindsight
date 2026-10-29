@@ -45,6 +45,44 @@ pub fn focus_process_window(pid: u32) {
     }
 }
 
+/// Bring `hwnd` to the foreground even when Windows' foreground lock would
+/// refuse it, by briefly attaching to the input queue of the current
+/// foreground thread.
+pub fn force_foreground(hwnd: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::WindowsAndMessaging::{BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow};
+    unsafe {
+        let hwnd = HWND(hwnd as _);
+        let fg_thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let me = GetCurrentThreadId();
+        let attached = fg_thread != 0 && fg_thread != me && AttachThreadInput(me, fg_thread, true).as_bool();
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd);
+        if attached {
+            let _ = AttachThreadInput(me, fg_thread, false);
+        }
+    }
+}
+
+/// True while a mouse button is down with the cursor outside `hwnd`.
+pub fn clicked_outside(hwnd: isize) -> bool {
+    use windows::Win32::Foundation::{HWND, POINT, RECT};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
+    unsafe {
+        let down = [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON].iter().any(|k| GetAsyncKeyState(k.0 as i32) as u16 & 0x8000 != 0);
+        if !down {
+            return false;
+        }
+        let (mut pt, mut r) = (POINT::default(), RECT::default());
+        if GetCursorPos(&mut pt).is_err() || GetWindowRect(HWND(hwnd as _), &mut r).is_err() {
+            return false;
+        }
+        pt.x < r.left || pt.x >= r.right || pt.y < r.top || pt.y >= r.bottom
+    }
+}
+
 pub fn foreground_is_this_process() -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
     let mut pid = 0;

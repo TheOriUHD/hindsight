@@ -67,6 +67,18 @@ pub fn list_monitors() -> Vec<MonitorInfo> {
         .collect()
 }
 
+/// Hardware encoder family of the GPU driving a monitor (None = primary), for
+/// encoding when no recording is running to ask. Empty means Media Foundation.
+pub fn encoder_vendor(monitor: Option<&str>) -> &'static str {
+    let all = monitors().unwrap_or_default();
+    let m = all.iter().find(|m| Some(m.name.as_str()) == monitor).or_else(|| all.first());
+    match m.map(|m| m.vendor_id) {
+        Some(0x10DE) => "nvenc",
+        Some(0x1002) => "amf",
+        _ => "",
+    }
+}
+
 // Scrubbing feels instant because every frame is a keyframe, not because of
 // the frame rate; 20 fps keeps the proxy at a few percent of the clip's size.
 const SCRUB_FPS: u32 = 20;

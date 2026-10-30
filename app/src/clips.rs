@@ -404,6 +404,7 @@ pub fn export(
         }
     };
 
+    log::info!("export with {encoder}, {height}p {fps} fps, {video_kbps:.0} kbps");
     let dst = sibling(&exports_dir(src)?, src, label);
     // Re-encode anything within 2% of the limit; AV1 rate control overshoots more.
     let limit_bytes = target_mb.map(|mb| mb * 1_000_000.0 * 0.98);
@@ -444,6 +445,12 @@ pub fn export(
                 log::warn!("AV1 export failed ({e:#}), using H.264");
                 let _ = std::fs::remove_file(&dst);
                 return export(src, start, end, target_mb, ExportCodec::H264, label, recording_encoder, progress);
+            }
+            // The GPU's encoder isn't usable, e.g. a card too old for NVENC.
+            Err(e) if vendor != "mf" && attempt == 0 => {
+                log::warn!("{encoder} export failed ({e:#}), using Media Foundation");
+                let _ = std::fs::remove_file(&dst);
+                return export(src, start, end, target_mb, codec, label, "", progress);
             }
             Err(e) => {
                 let _ = std::fs::remove_file(&dst);

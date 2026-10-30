@@ -129,7 +129,7 @@ Hindsight goes online for two things:
 ## Install
 
 > [!NOTE]
-> Download `Hindsight_1.1.0_x64-setup.exe` from [Releases](https://github.com/TheOriUHD/hindsight/releases/latest). It installs per user, no admin needed. **The installer is not code-signed**, so SmartScreen shows "unknown publisher" (More info › Run anyway).
+> Download `Hindsight_1.1.1_x64-setup.exe` from [Releases](https://github.com/TheOriUHD/hindsight/releases/latest). It installs per user, no admin needed. **The installer is not code-signed**, so SmartScreen shows "unknown publisher" (More info › Run anyway).
 
 Hindsight starts in the tray and opens its window. Press **F8** in a game to save a clip. Closing the window leaves recording running; **Quit Hindsight** in the tray menu stops it.
 

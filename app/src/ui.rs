@@ -28,8 +28,14 @@ fn output_dir() -> Res<PathBuf> {
     Ok(rpc::<Settings>(Request::Settings)?.output_dir)
 }
 
+/// The encoder in use, or while paused, the family of the GPU it would run on.
 fn recording_encoder() -> String {
-    rpc::<Value>(Request::Status).ok().and_then(|v| v["encoder"].as_str().map(String::from)).unwrap_or_default()
+    let active = rpc::<Value>(Request::Status).ok().and_then(|v| v["encoder"].as_str().map(String::from)).unwrap_or_default();
+    if !active.is_empty() {
+        return active;
+    }
+    let monitor = rpc::<Settings>(Request::Settings).ok().and_then(|s| s.monitor);
+    hindsight_recorder::encoder_vendor(monitor.as_deref()).to_string()
 }
 
 #[derive(Serialize, Clone)]

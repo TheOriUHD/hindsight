@@ -1,34 +1,29 @@
-//! Headless smoke test: record, press the hotkey via SendInput, report the clip.
+//! Headless smoke test: record a few seconds, save a clip, report it.
 use std::time::Duration;
 
 use hindsight_recorder::{Recorder, Settings};
-use windows::Win32::UI::Input::KeyboardAndMouse::*;
-
-fn press(vk: VIRTUAL_KEY) {
-    let mk = |flags| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, dwFlags: flags, ..Default::default() } },
-    };
-    unsafe { SendInput(&[mk(KEYBD_EVENT_FLAGS(0)), mk(KEYEVENTF_KEYUP)], std::mem::size_of::<INPUT>() as i32) };
-}
 
 fn main() {
     hindsight_encode::quiet_logs();
     let mut s = Settings::default();
-    s.fps = 120;
+    s.fps = 60;
     s.buffer_secs = 5;
     s.output_dir = std::env::temp_dir().join("hindsight-test");
     s.save_sound = false;
-    let (tx, rx) = std::sync::mpsc::channel();
-    let rec = Recorder::new(s.clone(), move |p| { let _ = tx.send(p.to_path_buf()); });
-    
+    s.save_overlay = false;
+    if std::env::args().any(|a| a == "wgc") {
+        s.capture_method = hindsight_recorder::CaptureMethod::Wgc;
+    }
+    let rec = Recorder::new(s, |_| {});
     rec.start();
-    std::thread::sleep(Duration::from_secs(7));
-    println!("{:#?}", rec.status());
-    press(VK_F8);
-    match rx.recv_timeout(Duration::from_secs(5)) {
+    for t in 1..=8 {
+        std::thread::sleep(Duration::from_secs(1));
+        println!("t={t}s dropped={}", rec.status().dropped_frames);
+    }
+    let st = rec.status();
+    println!("capture={} encoder={} recording={} dropped={} err={:?}", st.capture, st.encoder, st.recording, st.dropped_frames, st.error);
+    match rec.save_clip() {
         Ok(p) => println!("CLIP {}", p.display()),
-        Err(_) => println!("NO CLIP (hotkey not received)"),
+        Err(e) => println!("SAVE FAILED: {e:#}"),
     }
 }
-

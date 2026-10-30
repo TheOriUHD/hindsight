@@ -16,6 +16,9 @@ log = { version = "0.4", features = ["std"] }
 tauri = { version = "2", features = ["tray-icon", "protocol-asset", "image-png"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+reqwest = { version = "0.13", features = ["json"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 trash = "5"
 winreg = "0.55"
 hindsight-recorder = { path = "../crates/recorder" }
@@ -24,10 +27,15 @@ windows = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Storage_FileSystem",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",
     "Win32_System_JobObjects",
+    "Win32_System_Memory",
     "Win32_System_Pipes",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }

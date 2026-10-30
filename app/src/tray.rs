@@ -1,7 +1,9 @@
 //! Recorder process: tray icon, hotkeys, capture/encode, IPC server.
 
 use std::process::{Child, Command};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use hindsight_recorder::{Recorder, Settings};
 use serde_json::json;
@@ -16,6 +18,10 @@ struct State {
     recorder: Arc<Recorder>,
     ui: Mutex<Option<Child>>,
     popout: Mutex<Option<Child>>,
+    /// A newer version, once the background check has found one.
+    update: Mutex<Option<String>>,
+    /// The UI polls this; the window may already be open.
+    report_requested: AtomicBool,
 }
 
 /// Toggle the small tray popout, anchored at the tray icon (physical px).
@@ -61,10 +67,15 @@ fn menu(handle: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let toggle = MenuItem::with_id(handle, "toggle", if s.enabled { "Pause recording" } else { "Resume recording" }, true, None::<&str>)?;
     let open = MenuItem::with_id(handle, "open", "Open Hindsight", true, None::<&str>)?;
     let folder = MenuItem::with_id(handle, "folder", "Open clips folder", true, None::<&str>)?;
+    let report = MenuItem::with_id(handle, "report", "Report a problem…", true, None::<&str>)?;
     let quit = MenuItem::with_id(handle, "quit", "Quit Hindsight", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(handle)?;
     let sep2 = PredefinedMenuItem::separator(handle)?;
-    Menu::with_items(handle, &[&open, &sep, &save, &toggle, &folder, &sep2, &quit])
+    let menu = Menu::with_items(handle, &[&open, &sep, &save, &toggle, &folder, &sep2, &report, &quit])?;
+    if let Some(v) = handle.state::<State>().update.lock().unwrap().clone() {
+        menu.insert(&MenuItem::with_id(handle, "open", format!("Update to {v}…"), true, None::<&str>)?, 0)?;
+    }
+    Ok(menu)
 }
 
 fn refresh(handle: &AppHandle) {
@@ -107,6 +118,7 @@ fn handle_ipc(handle: &AppHandle, req: Request) -> anyhow::Result<serde_json::Va
             refresh(handle);
             json!(null)
         }
+        Request::TakeReportRequest => json!(handle.state::<State>().report_requested.swap(false, Ordering::Relaxed)),
         Request::OpenUi => {
             let h = handle.clone();
             handle.run_on_main_thread(move || open_ui(&h))?;
@@ -115,9 +127,31 @@ fn handle_ipc(handle: &AppHandle, req: Request) -> anyhow::Result<serde_json::Va
     })
 }
 
+/// Once after startup, then a few times a day: is there a newer version? This
+/// only asks; installing is always the user's click.
+fn watch_for_updates(handle: AppHandle) {
+    std::thread::sleep(Duration::from_secs(60));
+    loop {
+        if handle.state::<State>().recorder.settings().check_updates {
+            let check = async { crate::ui::updater(&handle)?.check().await.map_err(|e| e.to_string()) };
+            match tauri::async_runtime::block_on(check) {
+                Ok(Some(u)) => {
+                    log::info!("update available: {}", u.version);
+                    *handle.state::<State>().update.lock().unwrap() = Some(u.version.clone());
+                    refresh(&handle);
+                }
+                Ok(None) => {}
+                Err(e) => log::info!("update check: {e}"),
+            }
+        }
+        std::thread::sleep(Duration::from_secs(6 * 3600));
+    }
+}
+
 pub fn run(autostarted: bool) {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|handle, _args, _cwd| open_ui(handle)))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let handle = app.handle().clone();
             let settings = Settings::load();
@@ -126,7 +160,7 @@ pub fn run(autostarted: bool) {
                 let _ = system::set_autostart(true);
             }
             let recorder = Recorder::new(settings, |_| {});
-            app.manage(State { recorder: recorder.clone(), ui: Mutex::new(None), popout: Mutex::new(None) });
+            app.manage(State { recorder: recorder.clone(), ui: Mutex::new(None), popout: Mutex::new(None), update: Mutex::new(None), report_requested: AtomicBool::new(false) });
 
             TrayIconBuilder::with_id("tray")
                 .icon(app.default_window_icon().cloned().unwrap())
@@ -147,6 +181,10 @@ pub fn run(autostarted: bool) {
                             });
                         }
                         "open" => open_ui(handle),
+                        "report" => {
+                            handle.state::<State>().report_requested.store(true, Ordering::Relaxed);
+                            open_ui(handle);
+                        }
                         "folder" => {
                             let dir = rec.settings().output_dir;
                             let _ = std::fs::create_dir_all(&dir);
@@ -176,6 +214,9 @@ pub fn run(autostarted: bool) {
 
             let h = handle.clone();
             ipc::serve(move |req| handle_ipc(&h, req));
+
+            let h = handle.clone();
+            std::thread::spawn(move || watch_for_updates(h));
 
             let h = handle.clone();
             std::thread::spawn(move || {

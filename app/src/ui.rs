@@ -8,6 +8,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_updater::UpdaterExt;
 
 use crate::clips;
 use crate::ipc::{self, Request};
@@ -104,6 +105,11 @@ async fn scrub_proxy(handle: AppHandle, path: PathBuf, generate: bool) -> Option
 }
 
 #[tauri::command]
+fn copy_file(path: PathBuf) -> Res<()> {
+    system::copy_file_to_clipboard(&path).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 fn rename_clip(path: PathBuf, name: String) -> Res<PathBuf> {
     clips::rename(&path, &name).map_err(err)
 }
@@ -123,6 +129,64 @@ fn open_url(url: String) -> Res<()> {
     }
     system::open_with_default(std::path::Path::new(&url));
     Ok(())
+}
+
+#[derive(Serialize)]
+struct UpdateInfo {
+    version: String,
+    notes: Option<String>,
+}
+
+/// HINDSIGHT_UPDATE_URL points at another manifest for testing. That can't
+/// install anything unsigned: the signature check doesn't depend on the URL.
+pub fn updater(handle: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+    let mut b = handle.updater_builder();
+    if let Ok(url) = std::env::var("HINDSIGHT_UPDATE_URL") {
+        b = b.endpoints(vec![url.parse().map_err(err)?]).map_err(err)?;
+    }
+    b.build().map_err(err)
+}
+
+#[tauri::command]
+async fn check_update(handle: AppHandle) -> Res<Option<UpdateInfo>> {
+    let update = updater(&handle)?.check().await.map_err(err)?;
+    Ok(update.map(|u| UpdateInfo { version: u.version.clone(), notes: u.body.clone() }))
+}
+
+/// Downloads, verifies the signature and runs the installer, which closes
+/// Hindsight, updates it and starts it again.
+#[tauri::command]
+async fn install_update(handle: AppHandle) -> Res<()> {
+    let Some(update) = updater(&handle)?.check().await.map_err(err)? else { return Ok(()) };
+    let h = handle.clone();
+    let mut done = 0u64;
+    update
+        .download_and_install(
+            move |chunk, total| {
+                done += chunk as u64;
+                let pct = total.map(|t| done as f64 / t as f64).unwrap_or(0.0);
+                let _ = h.emit("progress", Progress { job: "update".into(), pct });
+            },
+            || {},
+        )
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+async fn report_requested() -> Res<bool> {
+    tauri::async_runtime::spawn_blocking(|| rpc(Request::TakeReportRequest)).await.map_err(err)?
+}
+
+#[tauri::command]
+async fn report_preview(handle: AppHandle) -> Res<Value> {
+    let version = handle.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || crate::report::collect(&version)).await.map_err(err)
+}
+
+#[tauri::command]
+async fn send_report(report: Value, description: String, contact: String) -> Res<String> {
+    crate::report::send(report, description, contact).await.map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -164,10 +228,10 @@ async fn pick_folder(handle: AppHandle) -> Option<PathBuf> {
 }
 
 #[tauri::command]
-async fn trim_clip(handle: AppHandle, path: PathBuf, start: f64, end: f64, exact: bool) -> Res<PathBuf> {
+async fn trim_clip(handle: AppHandle, path: PathBuf, start: f64, end: f64, exact: bool, to_exports: bool) -> Res<PathBuf> {
     tauri::async_runtime::spawn_blocking(move || {
         let enc = recording_encoder();
-        clips::trim(&path, start, end, exact, &enc, &|pct| {
+        clips::trim(&path, start, end, exact, to_exports, &enc, &|pct| {
             let _ = handle.emit("progress", Progress { job: "trim".into(), pct });
         })
     })
@@ -273,10 +337,9 @@ fn place_popout(window: &tauri::WebviewWindow, x: f64, y: f64) -> tauri::Result<
 }
 
 pub fn run(mode: Mode) {
-    // ffmpeg jobs (exports, thumbnails, scrub proxies) end with this process.
-    system::kill_children_on_exit();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let handle = app.handle().clone();
             allow_dir(&handle, &clips::thumbs_dir());
@@ -288,6 +351,15 @@ pub fn run(mode: Mode) {
                     if let Ok(dir) = output_dir() {
                         allow_dir(&handle, &dir);
                     }
+                    // An update relaunches whatever process installed it, which
+                    // is this one. Bring the recorder back too.
+                    std::thread::spawn(|| {
+                        if ipc::call::<Value>(&Request::Status).is_err() {
+                            if let Ok(exe) = std::env::current_exe() {
+                                let _ = std::process::Command::new(exe).arg("--autostart").spawn();
+                            }
+                        }
+                    });
                     WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                         .title("Hindsight")
                         .inner_size(1200.0, 780.0)
@@ -359,6 +431,12 @@ pub fn run(mode: Mode) {
             open_full_app,
             cancel_job,
             open_url,
+            copy_file,
+            check_update,
+            install_update,
+            report_requested,
+            report_preview,
+            send_report,
             popout_ready,
             close_popout,
             rename_clip,

@@ -44,16 +44,21 @@ const icon = (name) => `<svg class="ic"><use href="#i-${name}"/></svg>`;
 
 /* ---------- toast ---------- */
 let toastTimer;
-function toast(text, { error = false, progress = null, sticky = false, cancel = false } = {}) {
+function toast(text, { error = false, progress = null, sticky = false, cancel = false, action = null } = {}) {
   const t = $("#toast");
   $("#toast-text").textContent = text;
   $("#toast-cancel").hidden = !cancel;
+  $("#toast-action").hidden = !action;
+  if (action) {
+    $("#toast-action").textContent = action.label;
+    $("#toast-action").onclick = action.run;
+  }
   t.hidden = false;
   t.classList.toggle("error", error);
   t.classList.toggle("progress", progress != null);
   if (progress != null) $("#toast-bar").style.width = `${Math.round(progress * 100)}%`;
   clearTimeout(toastTimer);
-  if (!sticky) toastTimer = setTimeout(() => (t.hidden = true), error ? 6000 : 2400);
+  if (!sticky) toastTimer = setTimeout(() => (t.hidden = true), error || action ? 6000 : 2400);
 }
 
 /* ---------- navigation ---------- */
@@ -93,6 +98,7 @@ async function refreshStatus() {
     $("#toggle-rec").disabled = true;
     return;
   }
+  if (await invoke("report_requested").catch(() => false)) openReport();
   // The recorder is a separate process: hotkey saves and tray pause/resume
   // show up here as status changes.
   if (lastClip !== undefined && status.last_clip && status.last_clip !== lastClip) loadClips(status.last_clip);
@@ -213,7 +219,14 @@ function card(c, isNew) {
   img.alt = "";
   if (c.thumb) img.src = convertFileSrc(c.thumb);
   else img.style.visibility = "hidden";
-  th.append(img, el("span", "dur", fmtTime(c.duration, false)));
+  const copy = el("button", "copy");
+  copy.title = "Copy to clipboard";
+  copy.innerHTML = icon("copy");
+  copy.onclick = (e) => {
+    e.stopPropagation();
+    copyClip(c.path, 0, c.duration, true);
+  };
+  th.append(img, el("span", "dur", fmtTime(c.duration, false)), copy);
   d.append(th, el("div", "name", gameFilter ? fmtClock(c.created) : c.game), el("div", "meta", `${gameFilter ? "" : fmtClock(c.created) + " · "}${fmtSize(c.size)}`));
   d.title = c.name;
   d.onclick = () => openPlayer(c);
@@ -537,24 +550,32 @@ $("#p-title").addEventListener("keydown", (e) => {
 });
 $("#p-title").addEventListener("blur", commitRename);
 
-async function runJob(label, cmd, args) {
-  if (busy || !cur) return;
+// `done` handles the finished file; by default it joins the library.
+async function runJob(label, cmd, args, { verb = null, done = null } = {}) {
+  if (busy) return;
   busy = true;
+  jobVerb = verb;
   document.querySelectorAll("#p-trim, #p-export").forEach((b) => (b.disabled = true));
-  toast(`${label}…`, { progress: 0, sticky: true, cancel: true });
+  toast(`${verb || label}…`, { progress: 0, sticky: true, cancel: true });
   try {
     const out = await invoke(cmd, args);
-    toast(`${label} saved`);
-    loadClips(out);
+    if (done) await done(out);
+    else {
+      toast(`${label} saved`);
+      loadClips(out);
+    }
   } catch (e) {
     if (String(e) === "Cancelled") toast(`${label} cancelled`);
     else toast(`${label} failed: ${e}`, { error: true });
   }
   busy = false;
+  jobVerb = null;
   document.querySelectorAll("#p-trim, #p-export").forEach((b) => (b.disabled = false));
 }
+let jobVerb = null;
 listen("progress", (e) => {
-  if (busy && !cancelling) toast(`${e.payload.job === "export" ? "Exporting" : "Trimming"}… ${Math.round(e.payload.pct * 100)}%`, { progress: e.payload.pct, sticky: true, cancel: true });
+  if (e.payload.job === "update") return toast(`Downloading update… ${Math.round(e.payload.pct * 100)}%`, { progress: e.payload.pct, sticky: true });
+  if (busy && !cancelling) toast(`${jobVerb || (e.payload.job === "export" ? "Exporting" : "Trimming")}… ${Math.round(e.payload.pct * 100)}%`, { progress: e.payload.pct, sticky: true, cancel: true });
 });
 let cancelling = false;
 $("#toast-cancel").onclick = async () => {
@@ -566,7 +587,7 @@ $("#toast-cancel").onclick = async () => {
   $("#toast-cancel").disabled = false;
 };
 
-$("#p-trim").onclick = () => runJob("Selection", "trim_clip", { path: cur.path, start: trim.start, end: trim.end, exact: $("#p-exact").checked });
+$("#p-trim").onclick = () => runJob("Selection", "trim_clip", { path: cur.path, start: trim.start, end: trim.end, exact: $("#p-exact").checked, toExports: false });
 /* Export presets. Limits as of October 2026: Discord free 20 MB (raised from
  * 10 MB in August 2026), Nitro Basic 50 MB, Nitro 1 GB; WhatsApp 16 MB for
  * regular video; email 25 MB, of which encoding leaves about 18 MB for the
@@ -651,11 +672,51 @@ $("#p-export").onclick = () => {
     targetMb: p.mb,
     codec: $("#p-codec").value,
     label: p.file,
+  }, {
+    done: (out) => toast("Export saved to the Exports folder", { action: { label: "Show", run: () => invoke("show_in_folder", { path: out }) } }),
   });
 };
 
+/* Copy to clipboard: pastes as a file into Discord, a browser or a folder.
+ * Uses the preset from Settings, and always H.264 so it plays wherever it lands. */
+const copied = new Map(); // Copying the same thing twice doesn't encode twice.
+async function copyClip(path, start, end, whole) {
+  if (busy) return toast("Wait for the current job to finish");
+  const id = settings.copy_preset;
+  const p = PRESETS[id];
+  if (p?.maxDur && end - start > p.maxDur) return toast(`Over ${fmtTime(p.maxDur, false)} for ${p.file}: trim it first`, { error: true });
+  const target = p && id !== "hq" ? ` for ${p.file}` : "";
+  const finish = async (file) => {
+    await invoke("copy_file", { path: file });
+    copied.set(key, file);
+    toast(`Copied${target}. Paste it anywhere.`);
+  };
+  const key = [path, start, end, id].join("|");
+  try {
+    if (!p && whole) return await finish(path);
+    if (copied.has(key)) return await finish(copied.get(key));
+  } catch (e) {
+    copied.delete(key);
+    if (!p && whole) return toast(`Copy failed: ${e}`, { error: true });
+  }
+  const job = p
+    ? ["export_clip", { path, start, end, targetMb: p.mb, codec: "h264", label: p.file }]
+    : ["trim_clip", { path, start, end, exact: false, toExports: true }];
+  runJob("Copy", ...job, { verb: `Preparing${target}`, done: finish });
+}
+function copyCurrent() {
+  if (!cur) return;
+  const d = duration();
+  copyClip(cur.path, trim.start, trim.end, trim.start < 0.05 && trim.end > d - 0.05);
+}
+$("#p-copy").onclick = copyCurrent;
+
 document.addEventListener("keydown", (e) => {
   if (view !== "player" || !cur || ["INPUT", "SELECT"].includes(e.target.tagName)) return;
+  if (e.ctrlKey && e.key.toLowerCase() === "c") {
+    e.preventDefault();
+    return copyCurrent();
+  }
   const d = duration();
   const at = video._want ?? video.currentTime;
   switch (e.key) {
@@ -689,12 +750,18 @@ document.addEventListener("keydown", (e) => {
 
 /* ---------- settings ---------- */
 const form = $("#settings");
-const FIELDS = ["monitor", "max_height", "fps", "quality", "codec", "buffer_secs", "save_sound", "save_overlay", "desktop_audio", "microphone", "start_with_windows", "desktop_mode", "output_device", "input_device", "separate_tracks"];
+const FIELDS = ["monitor", "max_height", "fps", "quality", "codec", "capture_method", "check_updates", "copy_preset", "buffer_secs", "save_sound", "save_overlay", "desktop_audio", "microphone", "start_with_windows", "desktop_mode", "output_device", "input_device", "separate_tracks"];
 const NUMERIC = ["fps", "max_height", "buffer_secs"];
 const QUALITY = {
   balanced: "Smaller files. Fine for most games.",
   high: "Hard to tell apart from the original.",
   max: "Highest bitrate. Large files.",
+};
+
+const CAPTURE = {
+  auto: "Desktop Duplication, or Windows Graphics Capture if that isn't available.",
+  dxgi: "Works on every setup. Fullscreen games keep their mouse cursor.",
+  wgc: "Can hide the mouse cursor in OpenGL and Vulkan fullscreen games like Minecraft.",
 };
 
 function fillSettings() {
@@ -712,6 +779,10 @@ function fillSettings() {
   $("#out-dir").textContent = settings.output_dir;
   $("#out-dir").title = settings.output_dir;
   $("#quality-desc").textContent = QUALITY[settings.quality] || "";
+  $("#capture-desc").textContent = CAPTURE[settings.capture_method] || "";
+  $("#copy-desc").textContent = settings.copy_preset === "original"
+    ? "Copies the file as recorded. Instant, but it may be too big to send."
+    : "Encodes a copy to fit first, which can take a minute. It's saved in the Exports folder.";
   memHint();
   fillAudio();
 }
@@ -860,6 +931,85 @@ $("#pick-dir").onclick = async () => {
 };
 $("#open-logs").onclick = () => invoke("open_logs");
 
+/* ---------- updates ---------- */
+async function checkUpdate(manual) {
+  const line = $("#update-status");
+  if (manual) line.textContent = "Checking…";
+  let update;
+  try {
+    update = await invoke("check_update");
+  } catch (e) {
+    if (manual) line.textContent = `Couldn't check: ${e}`;
+    return;
+  }
+  if (!update) {
+    if (manual) line.textContent = "You're on the latest version.";
+    return;
+  }
+  line.textContent = `Version ${update.version} is available.`;
+  $("#update-title").textContent = `Update to ${update.version}`;
+  $("#update-banner").hidden = false;
+  $("#update-check").textContent = "Update";
+  $("#update-check").onclick = installUpdate;
+}
+async function installUpdate() {
+  $("#update-banner").disabled = true;
+  $("#update-check").disabled = true;
+  toast("Downloading update…", { progress: 0, sticky: true });
+  try {
+    await invoke("install_update"); // The installer closes this window.
+  } catch (e) {
+    toast(`Update failed: ${e}`, { error: true });
+    $("#update-banner").disabled = false;
+    $("#update-check").disabled = false;
+  }
+}
+$("#update-banner").onclick = installUpdate;
+$("#update-check").onclick = () => checkUpdate(true);
+
+/* ---------- report a problem ---------- */
+let reportData = null;
+async function openReport() {
+  const d = $("#report");
+  if (d.open) return;
+  reportData = null;
+  $("#report-text").value = "";
+  $("#report-result").textContent = "";
+  $("#report-preview").textContent = "Collecting…";
+  $("#report-send").textContent = "Send";
+  $("#report-send").hidden = false;
+  $("#report-send").disabled = true;
+  $("#report-cancel").textContent = "Cancel";
+  d.showModal();
+  try {
+    reportData = await invoke("report_preview");
+    $("#report-preview").textContent = JSON.stringify(reportData, null, 2);
+    $("#report-send").disabled = false;
+  } catch (e) {
+    $("#report-result").textContent = `Couldn't collect system details: ${e}`;
+  }
+}
+$("#report-open").onclick = openReport;
+$("#report-cancel").onclick = () => $("#report").close();
+$("#report-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const send = $("#report-send");
+  const result = $("#report-result");
+  send.disabled = true;
+  send.textContent = "Sending…";
+  result.textContent = "";
+  try {
+    const id = await invoke("send_report", { report: reportData, description: $("#report-text").value, contact: $("#report-contact").value });
+    result.textContent = `Sent, thank you. Your reference is ${id}.`;
+    send.hidden = true;
+    $("#report-cancel").textContent = "Close";
+  } catch (err) {
+    result.textContent = `Couldn't send: ${err}`;
+    send.textContent = "Try again";
+    send.disabled = false;
+  }
+});
+
 // External links open in the default browser (the webview never navigates away).
 document.addEventListener("click", (e) => {
   const a = e.target.closest("[data-url]");
@@ -937,6 +1087,7 @@ $("#hotkey").addEventListener("click", () => {
   refreshStatus();
   loadClips();
   loadAudioDevices();
+  if (settings?.check_updates) checkUpdate(false);
 })();
 
 // Mouse back/forward buttons would otherwise navigate the webview.

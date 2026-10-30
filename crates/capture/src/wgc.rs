@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
-use windows::core::{factory, h, Interface};
-use windows::Foundation::Metadata::ApiInformation;
+use windows::core::{factory, Interface};
 use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession};
 use windows::Graphics::DirectX::DirectXPixelFormat;
@@ -9,14 +8,6 @@ use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 
 use crate::{Frame, GpuDevice, Monitor};
-
-pub fn supports_uncapped() -> bool {
-    ApiInformation::IsPropertyPresent(
-        h!("Windows.Graphics.Capture.GraphicsCaptureSession"),
-        h!("MinUpdateInterval"),
-    )
-    .unwrap_or(false)
-}
 
 pub struct WgcCapture {
     session: GraphicsCaptureSession,

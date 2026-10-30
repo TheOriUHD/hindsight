@@ -18,6 +18,7 @@
       <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor" stroke="none"/></symbol>
       <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" stroke="none"/></symbol>
       <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
       <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></symbol>
     </defs>
   </svg>
@@ -37,6 +38,8 @@
       <div class="games" id="games"></div>
       <button class="nav-item" data-view="settings"><svg class="ic"><use href="#i-gear"/></svg><span>Settings</span></button>
     </nav>
+
+    <button class="update" id="update-banner" hidden><b id="update-title"></b><span>Restarts Hindsight</span></button>
 
     <section class="rec" id="rec">
       <div class="rec-state"><span class="dot"></span><span id="rec-state">Starting</span></div>
@@ -70,6 +73,7 @@
         <input class="title-edit" id="p-title" spellcheck="false" title="Click to rename" />
         <span class="sub" id="p-meta"></span>
         <div class="spacer"></div>
+        <button class="icon-btn" id="p-copy" title="Copy to clipboard (Ctrl+C)"><svg class="ic"><use href="#i-copy"/></svg></button>
         <button class="icon-btn" id="p-external" title="Open in default player"><svg class="ic"><use href="#i-external"/></svg></button>
         <button class="icon-btn" id="p-folder" title="Show in folder"><svg class="ic"><use href="#i-folder"/></svg></button>
         <button class="icon-btn danger" id="p-delete" title="Move to Recycle Bin"><svg class="ic"><use href="#i-trash"/></svg></button>
@@ -133,7 +137,7 @@
           <button class="btn primary" id="p-export"><svg class="ic"><use href="#i-export"/></svg>Export</button>
         </div>
       </div>
-      <p class="keys"><kbd>Space</kbd> play <kbd>I</kbd><kbd>O</kbd> in / out <kbd>←</kbd><kbd>→</kbd> seek <kbd>Esc</kbd> back</p>
+      <p class="keys"><kbd>Space</kbd> play <kbd>I</kbd><kbd>O</kbd> in / out <kbd>←</kbd><kbd>→</kbd> seek <kbd>Ctrl</kbd><kbd>C</kbd> copy <kbd>Esc</kbd> back</p>
     </section>
 
     <!-- Settings -->
@@ -179,6 +183,13 @@
               <option value="h264">H.264</option>
             </select>
           </div>
+          <div class="row"><div class="lbl">Capture method<small id="capture-desc"></small></div>
+            <select name="capture_method">
+              <option value="auto">Automatic</option>
+              <option value="dxgi">Desktop Duplication</option>
+              <option value="wgc">Windows Graphics Capture</option>
+            </select>
+          </div>
         </div>
 
         <h2>Replay</h2>
@@ -198,6 +209,22 @@
           <div class="row"><div class="lbl">Save clip<small>Keyboard combo or a mouse side button. Works in fullscreen games.</small></div><button type="button" class="btn hotkey" id="hotkey">F8</button></div>
           <label class="row toggle"><div class="lbl">Sound on save</div><input type="checkbox" name="save_sound" /><i></i></label>
           <label class="row toggle"><div class="lbl">Popup on save<small>Slides in from the screen edge. Not visible in exclusive fullscreen.</small></div><input type="checkbox" name="save_overlay" /><i></i></label>
+        </div>
+
+        <h2>Sharing</h2>
+        <div class="group">
+          <div class="row"><div class="lbl">Copy to clipboard<small id="copy-desc"></small></div>
+            <select name="copy_preset">
+              <option value="original">Original file</option>
+              <option value="discord">Discord · 20 MB</option>
+              <option value="nitro-basic">Nitro Basic · 50 MB</option>
+              <option value="nitro">Nitro · 1 GB</option>
+              <option value="whatsapp">WhatsApp · 16 MB</option>
+              <option value="email">Email attachment · 25 MB</option>
+              <option value="x">X / Twitter · 512 MB</option>
+              <option value="hq">High quality, no limit</option>
+            </select>
+          </div>
         </div>
 
         <h2>Audio</h2>
@@ -230,7 +257,7 @@
         <h2>About</h2>
         <div class="group">
           <div class="row"><div class="lbl">Hindsight <span id="version"></span>
-              <small>&copy; 2026 <a href="#" data-url="https://github.com/TheOriUHD">TheOriUHD</a>. No accounts, no uploads.</small>
+              <small>&copy; 2026 <a href="#" data-url="https://github.com/TheOriUHD">TheOriUHD</a>. No accounts. Your clips stay on your PC.</small>
             </div>
             <button type="button" class="btn" data-url="https://github.com/TheOriUHD/hindsight">GitHub</button>
             <button type="button" class="btn" data-url="https://hindsighthq.app">Website</button>
@@ -238,14 +265,39 @@
           <div class="row"><div class="lbl">License<small>Free for personal and other noncommercial use (PolyForm Noncommercial 1.0.0). Video encoding by FFmpeg under the LGPL 2.1.</small></div>
             <button type="button" class="btn" data-url="https://github.com/TheOriUHD/hindsight/blob/main/LICENSE">License</button>
           </div>
-          <div class="row"><div class="lbl">Logs<small>For bug reports. Nothing is ever sent anywhere.</small></div><button type="button" class="btn" id="open-logs">Open logs</button></div>
+          <div class="row"><div class="lbl">Updates<small id="update-status">Asks hindsighthq.app for the latest version.</small></div><button type="button" class="btn" id="update-check">Check now</button></div>
+          <label class="row toggle"><div class="lbl">Check for updates automatically<small>Never installs anything without your click.</small></div><input type="checkbox" name="check_updates" /><i></i></label>
+          <div class="row"><div class="lbl">Report a problem<small>Sends a description, system details and logs. You can read all of it first.</small></div><button type="button" class="btn" id="report-open">Report a problem</button></div>
+          <div class="row"><div class="lbl">Logs<small>Stored on this PC. They only leave it in a report you send.</small></div><button type="button" class="btn" id="open-logs">Open logs</button></div>
         </div>
       </form>
     </section>
   </main>
 
+  <dialog class="report" id="report">
+    <form method="dialog" id="report-form">
+      <h2>Report a problem</h2>
+      <label>What happened?
+        <textarea id="report-text" rows="5" maxlength="10000" placeholder="What you were doing, what you expected, what happened instead." required></textarea>
+      </label>
+      <label>Contact <small>Optional, if you'd like a reply. Discord or email.</small>
+        <input id="report-contact" maxlength="200" spellcheck="false" />
+      </label>
+      <details id="report-details">
+        <summary>What gets sent</summary>
+        <p class="sub">Windows version, CPU, RAM, GPUs and drivers, displays, audio devices, your settings, recorder status, capture and overlay apps that are running, Hindsight crash records and logs. Your user name, clip names and clip paths are removed.</p>
+        <pre id="report-preview">Collecting…</pre>
+      </details>
+      <p class="sub" id="report-result"></p>
+      <div class="report-foot">
+        <button type="button" class="btn" id="report-cancel">Cancel</button>
+        <button type="submit" class="btn primary" id="report-send" disabled>Send</button>
+      </div>
+    </form>
+  </dialog>
+
   <div class="toast" id="toast" hidden>
-    <div class="toast-row"><span id="toast-text"></span><button class="btn small-btn" id="toast-cancel" hidden>Cancel</button></div>
+    <div class="toast-row"><span id="toast-text"></span><button class="btn small-btn" id="toast-action" hidden></button><button class="btn small-btn" id="toast-cancel" hidden>Cancel</button></div>
     <div class="bar"><i id="toast-bar"></i></div>
   </div>
 

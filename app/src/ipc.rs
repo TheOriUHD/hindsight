@@ -27,6 +27,8 @@ pub enum Request {
     SetEnabled { enabled: bool },
     /// Open (or focus) the full library window; sent by the tray popout.
     OpenUi,
+    /// Whether the tray menu asked for the report dialog since the last call.
+    TakeReportRequest,
 }
 
 #[derive(Serialize, Deserialize)]

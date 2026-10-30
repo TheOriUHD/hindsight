@@ -38,7 +38,7 @@ Clipping tools tend to grow accounts, feeds, cloud uploads and an Electron windo
 
 - **Always on, nearly free.** Frames go from the screen to the GPU's video encoder without ever being copied to the CPU. The recorder process doesn't load a browser engine.
 - **Instant saves.** The popup confirms the moment you press the key. The clip is cut from what is already encoded and written in one pass, with no re-encode.
-- **Your files.** Clips are plain MP4s in `Videos\Hindsight`. Nothing leaves your PC.
+- **Your files.** Clips are plain MP4s in `Videos\Hindsight`. They never leave your PC.
 
 <br>
 
@@ -74,7 +74,8 @@ Clipping tools tend to grow accounts, feeds, cloud uploads and an Electron windo
 
 - **Instant scrubbing**: each clip carries a small all-keyframe preview, so dragging the timeline shows every frame as you move.
 - **Trim** with handles or `I` / `O`. A trimmed copy saves instantly by cutting on keyframes, or frame-accurately with a GPU re-encode.
-- **Export presets** for where it's going: Discord (20 MB), Nitro Basic (50 MB), Nitro (1 GB), WhatsApp, email, X, or any size. The export picks the resolution and frame rate the size can carry, and AV1 is one click away when the other side can play it.
+- **Export presets** for where it's going: Discord (20 MB), Nitro Basic (50 MB), Nitro (1 GB), WhatsApp, email, X, or any size. The export picks the resolution and frame rate the size can carry, and AV1 is one click away when the other side can play it. Exports go to an `Exports` subfolder, so they stay out of your library.
+- **Copy to clipboard.** Paste a clip straight into Discord or anywhere else that takes files. Pick the preset it's encoded with in Settings, or copy the original.
 - **Library**: grouped by day, filtered by game, hover a thumbnail to skim it.
 
 </td>
@@ -108,14 +109,19 @@ Clipping tools tend to grow accounts, feeds, cloud uploads and an Electron windo
 
 ### Your data
 
-No account, no telemetry, no update checks, no network access at all. Settings, logs and caches live in `%LOCALAPPDATA%\app.hindsight.clips`; clips go to the folder you choose.
+No account and no telemetry. Clips, settings and logs stay on your PC: settings, logs and caches in `%LOCALAPPDATA%\app.hindsight.clips`, clips in the folder you choose.
+
+Hindsight goes online for two things:
+
+- **Update checks.** A few times a day it asks `api.hindsighthq.app` for the latest version. Nothing is installed without your click, updates are signature-checked, and you can turn the check off in Settings.
+- **Problem reports.** Only when you open *Report a problem* and press Send. It sends your description, system details (Windows, CPU, RAM, GPUs and drivers, displays, audio devices), settings and logs. You can read all of it before sending. Your user name, clip names and clip paths are removed, and IP addresses aren't stored.
 
 <br>
 
 ## What Hindsight won't do
 
 - **Inject into games.** No hooks, no DLLs, no in-game overlay. That keeps it safe with anti-cheat (Vanguard, Easy Anti-Cheat, BattlEye) and is why the popup can't appear over exclusive-fullscreen games (the chime still plays).
-- **Upload anything.** Sharing is up to you: export to a size and drag the file where you want it.
+- **Upload anything.** Sharing is up to you: copy a clip, or export to a size, and paste it where you want it.
 - **Run a browser next to your game.** The library window is a separate process that exits completely when you close it.
 
 <br>
@@ -123,13 +129,13 @@ No account, no telemetry, no update checks, no network access at all. Settings, 
 ## Install
 
 > [!NOTE]
-> Download `Hindsight_1.0.0_x64-setup.exe` from [Releases](https://github.com/TheOriUHD/hindsight/releases/latest). It installs per user, no admin needed. **The installer is not code-signed**, so SmartScreen shows "unknown publisher" (More info › Run anyway).
+> Download `Hindsight_1.1.0_x64-setup.exe` from [Releases](https://github.com/TheOriUHD/hindsight/releases/latest). It installs per user, no admin needed. **The installer is not code-signed**, so SmartScreen shows "unknown publisher" (More info › Run anyway).
 
 Hindsight starts in the tray and opens its window. Press **F8** in a game to save a clip. Closing the window leaves recording running; **Quit Hindsight** in the tray menu stops it.
 
 ### Requirements
 
-- Windows 10 2004 or later, or Windows 11. Windows 11 24H2 records above 60 fps with Windows Graphics Capture; older versions use Desktop Duplication automatically.
+- Windows 10 2004 or later, or Windows 11.
 - A GPU with a hardware video encoder: NVIDIA GTX 10-series or newer, AMD RX 400 or newer, or Intel graphics with Quick Sync. AV1 needs RTX 40, RX 7000 or Arc.
 - WebView2 for the library window (part of Windows 11; the installer fetches it on Windows 10 if missing).
 
@@ -138,7 +144,7 @@ Hindsight starts in the tray and opens its window. Press **F8** in a game to sav
 ## How it works
 
 ```
-Screen ─▶ Windows Graphics Capture (D3D11 texture)
+Screen ─▶ Desktop Duplication (D3D11 texture)
        ─▶ GPU video processor: BGRA → NV12, scale          ← never leaves the GPU
        ─▶ NVENC / AMF / Media Foundation encoder
        ─▶ compressed packets in a RAM ring buffer           ← a few hundred MB at most
@@ -187,6 +193,8 @@ npm install
 npx tauri build                                              # target\release\bundle\nsis\Hindsight_*-setup.exe
 ```
 
+Official builds are signed for the updater by `scripts\release.ps1`, which needs the private key. Plain `npx tauri build` fails at the signing step without it; set `bundle.createUpdaterArtifacts` to `false` in `app/tauri.conf.json` for your own builds.
+
 `cargo build --release -p hindsight` builds just the exe; the FFmpeg DLLs are copied next to it.
 
 <br>
@@ -195,7 +203,7 @@ npx tauri build                                              # target\release\bu
 
 Version 1.0. It is in daily use on NVIDIA hardware; AMD and Intel paths are implemented but have seen far less testing. Known gaps:
 
-- Desktop Duplication (used before Windows 11 24H2) doesn't draw the mouse cursor.
+- Windows Graphics Capture, an option in Settings, can hide the mouse cursor in OpenGL and Vulkan fullscreen games. Desktop Duplication, the default, doesn't.
 - HDR displays are recorded as SDR without tone mapping.
 - Intel GPUs use Media Foundation rather than Quick Sync directly.
 - The replay buffer lives in RAM only; there is no disk-backed buffer for very long clips.
@@ -217,7 +225,7 @@ The game is in exclusive fullscreen, which draws over every window. Switch the g
 Settings shows the most the replay buffer can take with your settings. At 4K 60 fps on High it's around 400 MB for a minute; typical gameplay uses less.
 
 **Does it phone home?**
-No. Hindsight makes no network requests.
+No telemetry. It checks for updates, which you can turn off, and sends a problem report only when you press Send. See [Your data](#your-data).
 
 <br>
 

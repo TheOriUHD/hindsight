@@ -4,10 +4,13 @@
 //! They never touch system memory; consumers convert/encode on the GPU.
 //!
 //! Backends:
-//! - Windows.Graphics.Capture (preferred) when it can run uncapped (Win11 24H2+).
-//! - DXGI Desktop Duplication otherwise: full refresh rate on any Win8+ system,
-//!   no yellow capture border, invisible to the user.
+//! - DXGI Desktop Duplication (preferred): full refresh rate on any Win8+ system,
+//!   invisible to the user. We draw the cursor into the frames ourselves.
+//! - Windows.Graphics.Capture as the fallback. It forces a software cursor, and
+//!   OpenGL/Vulkan exclusive-fullscreen games then lose their real cursor while
+//!   it runs: https://github.com/microsoft/Windows.UI.Composition-Win32-Samples/issues/128
 
+mod cursor;
 mod device;
 mod dxgi;
 mod monitor;
@@ -46,11 +49,11 @@ pub enum Backend {
 }
 
 impl Backend {
-    /// WGC throttles to ~60 fps unless `MinUpdateInterval` exists, so only pick it
-    /// where it can run at the display's full refresh rate.
-    pub fn auto() -> Self {
-        ensure_mta();
-        if wgc::supports_uncapped() { Backend::Wgc } else { Backend::Dxgi }
+    pub fn other(self) -> Self {
+        match self {
+            Backend::Wgc => Backend::Dxgi,
+            Backend::Dxgi => Backend::Wgc,
+        }
     }
 }
 
@@ -65,11 +68,12 @@ impl Capture {
         gpu: &GpuDevice,
         monitor: &Monitor,
         backend: Backend,
+        fps: u32,
         on_frame: impl FnMut(Frame) + Send + 'static,
     ) -> Result<Self> {
         Ok(match backend {
             Backend::Wgc => Capture::Wgc(wgc::WgcCapture::start(gpu, monitor, on_frame)?),
-            Backend::Dxgi => Capture::Dxgi(dxgi::DxgiCapture::start(gpu, monitor, on_frame)?),
+            Backend::Dxgi => Capture::Dxgi(dxgi::DxgiCapture::start(gpu, monitor, fps, on_frame)?),
         })
     }
 }

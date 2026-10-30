@@ -55,6 +55,28 @@ fn thumb_path(clip: &Path, mtime: u64) -> PathBuf {
     thumbs_dir().join(format!("{:016x}.jpg", h.finish()))
 }
 
+/// Exports used to be saved next to the clips: "Fortnite 2026-10-29 15-30-12 Discord".
+fn is_old_export(stem: &str) -> bool {
+    let parts: Vec<&str> = stem.split(' ').collect();
+    let Some(date) = parts.iter().position(|p| p.len() == 10 && p.as_bytes()[4] == b'-' && p.as_bytes()[7] == b'-') else { return false };
+    let mut label = parts.get(date + 2..).unwrap_or(&[]).to_vec();
+    if label.len() > 1 && label.last().is_some_and(|n| n.parse::<u32>().is_ok()) {
+        label.pop();
+    }
+    let label = label.join(" ");
+    ["Discord", "Nitro Basic", "Nitro", "WhatsApp", "Email", "X", "Export"].contains(&label.as_str())
+        || label.strip_suffix("MB").is_some_and(|n| !n.trim().is_empty() && n.trim().chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Exports are copies made for sending, so they don't belong in the library.
+pub const EXPORTS_DIR: &str = "Exports";
+
+fn exports_dir(clip: &Path) -> Result<PathBuf> {
+    let dir = clip.parent().unwrap_or(Path::new(".")).join(EXPORTS_DIR);
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 pub fn list(dir: &Path, on_thumb: impl Fn(PathBuf, PathBuf) + Send + Sync + 'static) -> Vec<ClipInfo> {
     let mut out = Vec::new();
     let Ok(rd) = std::fs::read_dir(dir) else { return out };
@@ -62,6 +84,13 @@ pub fn list(dir: &Path, on_thumb: impl Fn(PathBuf, PathBuf) + Send + Sync + 'sta
         let path = e.path();
         if !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("mp4")) {
             continue;
+        }
+        if is_old_export(&path.file_stem().unwrap_or_default().to_string_lossy()) {
+            let moved = exports_dir(&path).and_then(|d| Ok(std::fs::rename(&path, d.join(e.file_name()))?));
+            match moved {
+                Ok(()) => continue,
+                Err(e) => log::warn!("couldn't move an old export: {e:#}"),
+            }
         }
         let Ok(meta) = e.metadata() else { continue };
         let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
@@ -139,16 +168,16 @@ fn make_thumb(clip: &Path, thumb: &Path) -> Result<()> {
         .args(["-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4"])
         .arg(thumb)
         .creation_flags(CREATE_NO_WINDOW)
-        .status()?;
+        .spawn()
+        .and_then(wait_adopted)?;
     if !status.success() {
         bail!("ffmpeg thumbnail failed");
     }
     Ok(())
 }
 
-/// Next free "<stem> <suffix>.mp4" next to `src`.
-fn sibling(src: &Path, suffix: &str) -> PathBuf {
-    let dir = src.parent().unwrap_or(Path::new("."));
+/// Next free "<stem> <suffix>.mp4" in `dir`.
+fn sibling(dir: &Path, src: &Path, suffix: &str) -> PathBuf {
     let stem = src.file_stem().unwrap_or_default().to_string_lossy();
     let mut p = dir.join(format!("{stem} {suffix}.mp4"));
     let mut n = 2;
@@ -230,6 +259,7 @@ fn run_ffmpeg(args: &[String], duration: f64, progress: &dyn Fn(f64)) -> Result<
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .context("starting ffmpeg")?;
+    crate::system::adopt_child(&child);
     *RUNNING_PID.lock().unwrap() = Some(child.id());
     let stdout = child.stdout.take().unwrap();
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -259,9 +289,11 @@ fn source_kbps(src: &Path) -> f64 {
 }
 
 /// Lossless trim: cuts on keyframes, instant. Exact: frame-accurate re-encode on the GPU.
-pub fn trim(src: &Path, start: f64, end: f64, exact: bool, recording_encoder: &str, progress: &dyn Fn(f64)) -> Result<PathBuf> {
+/// `to_exports` is for cuts made to send somewhere rather than to keep.
+pub fn trim(src: &Path, start: f64, end: f64, exact: bool, to_exports: bool, recording_encoder: &str, progress: &dyn Fn(f64)) -> Result<PathBuf> {
     begin_job();
-    let dst = sibling(src, "trim");
+    let dir = if to_exports { exports_dir(src)? } else { src.parent().unwrap_or(Path::new(".")).to_path_buf() };
+    let dst = sibling(&dir, src, "trim");
     let dur = (end - start).max(0.1);
     let mut args: Vec<String> = Vec::new();
     if exact {
@@ -372,7 +404,7 @@ pub fn export(
         }
     };
 
-    let dst = sibling(src, label);
+    let dst = sibling(&exports_dir(src)?, src, label);
     // Re-encode anything within 2% of the limit; AV1 rate control overshoots more.
     let limit_bytes = target_mb.map(|mb| mb * 1_000_000.0 * 0.98);
     for attempt in 0..3 {
@@ -461,7 +493,8 @@ pub fn scrub_proxy(clip: &Path, generate: bool, recording_encoder: &str, on_read
         let ok = Command::new(ffmpeg_exe())
             .args(&args)
             .creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS)
-            .status()
+            .spawn()
+            .and_then(wait_adopted)
             .map(|s| s.success())
             .unwrap_or(false);
         if ok && std::fs::rename(&tmp, &proxy).is_ok() {
@@ -471,6 +504,11 @@ pub fn scrub_proxy(clip: &Path, generate: bool, recording_encoder: &str, on_read
         }
     });
     None
+}
+
+fn wait_adopted(mut child: std::process::Child) -> std::io::Result<std::process::ExitStatus> {
+    crate::system::adopt_child(&child);
+    child.wait()
 }
 
 pub const STRIP_TILES: u32 = 32;
@@ -496,7 +534,8 @@ pub fn filmstrip(clip: &Path) -> Option<PathBuf> {
         .args(["-vf", &format!("fps={}/{dur:.3},scale=160:90,tile={}x1", STRIP_TILES, STRIP_TILES), "-frames:v", "1", "-q:v", "4"])
         .arg(&tmp)
         .creation_flags(CREATE_NO_WINDOW)
-        .status()
+        .spawn()
+        .and_then(wait_adopted)
         .map(|s| s.success())
         .unwrap_or(false);
     (ok && std::fs::rename(&tmp, &out).is_ok()).then_some(out)

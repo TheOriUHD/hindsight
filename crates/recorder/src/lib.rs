@@ -22,7 +22,7 @@ use hindsight_encode::{EncoderConfig, HwFrame, Mp4Writer, Packet, StreamParams, 
 use serde::Serialize;
 
 pub use audio::{list_audio_apps, list_devices, AudioApp, AudioDevice};
-pub use settings::{data_dir, CodecChoice, DesktopMode, Quality, Settings};
+pub use settings::{data_dir, CaptureMethod, CodecChoice, DesktopMode, Quality, Settings};
 
 use audio::AudioPipeline;
 use clock::now_100ns;
@@ -35,6 +35,8 @@ pub struct Status {
     pub error: Option<String>,
     pub encoder: String,
     pub monitor: String,
+    /// Which capture API is actually running.
+    pub capture: String,
     pub width: u32,
     pub height: u32,
     pub fps: u32,
@@ -286,7 +288,7 @@ fn open_session(s: &Settings) -> Result<Session> {
         let scrub_tx = scrub_tx.clone();
         let mut scrub_source = scrub_source.clone();
         let mut last_scrub = i64::MIN;
-        Capture::start(&gpu, &mon, backend, move |f| {
+        Capture::start(&gpu, &mon, backend, s.fps, move |f| {
             if let Some(src) = scrub_source.as_mut() {
                 let ss = slot_at(f.timestamp_100ns, origin, scrub_interval);
                 if ss > last_scrub || last_scrub == i64::MIN {
@@ -321,11 +323,12 @@ fn open_session(s: &Settings) -> Result<Session> {
             }
         })
     };
-    let capture = match start_capture(Backend::auto()) {
-        Ok(c) => c,
+    let wanted = if s.capture_method == CaptureMethod::Wgc { Backend::Wgc } else { Backend::Dxgi };
+    let (capture, backend) = match start_capture(wanted) {
+        Ok(c) => (c, wanted),
         Err(e) => {
-            log::warn!("capture via {:?} failed ({e:#}), falling back to DXGI", Backend::auto());
-            start_capture(Backend::Dxgi)?
+            log::warn!("capture via {wanted:?} failed ({e:#}), trying {:?}", wanted.other());
+            (start_capture(wanted.other())?, wanted.other())
         }
     };
     drop(tx);
@@ -338,13 +341,14 @@ fn open_session(s: &Settings) -> Result<Session> {
         error: None,
         encoder: encoder_name,
         monitor: mon.name.clone(),
+        capture: format!("{backend:?}"),
         width: w,
         height: h,
         fps: s.fps,
         audio_tracks: audio::track_titles(&sources, s.separate_tracks),
         ..Default::default()
     };
-    log::info!("recording {} {}x{}@{} via {} on {}", mon.name, w, h, s.fps, status.encoder, gpu.adapter_name);
+    log::info!("recording {} {}x{}@{} via {} ({backend:?} capture) on {}", mon.name, w, h, s.fps, status.encoder, gpu.adapter_name);
     Ok(Session {
         capture: Some(capture),
         encoder: Some(encoder),
@@ -443,6 +447,7 @@ impl Recorder {
         new.save()?;
         let restart = old.enabled != new.enabled
             || old.monitor != new.monitor
+            || old.capture_method != new.capture_method
             || old.fps != new.fps
             || old.max_height != new.max_height
             || old.codec != new.codec

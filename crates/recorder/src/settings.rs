@@ -6,6 +6,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::audio::{AudioApp, SourceSpec};
 
+/// How the screen is captured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureMethod {
+    /// Desktop Duplication, falling back to Windows Graphics Capture.
+    Auto,
+    Dxgi,
+    Wgc,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DesktopMode {
@@ -39,6 +49,7 @@ pub struct Settings {
     pub enabled: bool,
     /// DXGI device name like `\\.\DISPLAY2`; None = primary monitor.
     pub monitor: Option<String>,
+    pub capture_method: CaptureMethod,
     pub fps: u32,
     /// Output height cap; 0 = native.
     pub max_height: u32,
@@ -60,6 +71,9 @@ pub struct Settings {
     pub separate_tracks: bool,
     pub output_dir: PathBuf,
     pub start_with_windows: bool,
+    pub check_updates: bool,
+    /// Export preset for "copy to clipboard"; "original" copies the file as is.
+    pub copy_preset: String,
     pub save_sound: bool,
     /// Small "Clip saved" toast in the corner of the recorded screen.
     pub save_overlay: bool,
@@ -70,6 +84,7 @@ impl Default for Settings {
         Self {
             enabled: true,
             monitor: None,
+            capture_method: CaptureMethod::Auto,
             fps: 60,
             max_height: 0,
             codec: CodecChoice::Auto,
@@ -85,6 +100,8 @@ impl Default for Settings {
             separate_tracks: true,
             output_dir: dirs::video_dir().unwrap_or_else(|| PathBuf::from(".")).join("Hindsight"),
             start_with_windows: true,
+            check_updates: true,
+            copy_preset: "discord".into(),
             save_sound: true,
             save_overlay: true,
         }

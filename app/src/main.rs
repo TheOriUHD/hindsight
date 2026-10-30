@@ -9,6 +9,7 @@
 
 mod clips;
 mod ipc;
+mod report;
 mod system;
 mod tray;
 mod ui;

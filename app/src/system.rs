@@ -45,29 +45,77 @@ pub fn focus_process_window(pid: u32) {
     }
 }
 
-/// Put this process in a job object that kills everything it started when
-/// it exits, so closing the window mid-export doesn't leave ffmpeg running.
-pub fn kill_children_on_exit() {
+/// Tie a child process to this one: it's killed when we exit, so closing the
+/// window mid-export doesn't leave ffmpeg running. Only ffmpeg goes in here.
+/// The update installer must outlive us, so this process itself stays out.
+pub fn adopt_child(child: &std::process::Child) {
+    use std::os::windows::io::AsRawHandle;
+    use std::sync::OnceLock;
+    use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::JobObjects::*;
-    use windows::Win32::System::Threading::GetCurrentProcess;
+    static JOB: OnceLock<isize> = OnceLock::new();
     unsafe {
-        let Ok(job) = CreateJobObjectW(None, None) else { return };
-        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        let ok = SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as *const std::ffi::c_void,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        )
-        .is_ok()
-            && AssignProcessToJobObject(job, GetCurrentProcess()).is_ok();
-        if !ok {
-            log::warn!("couldn't set up job object; child processes may outlive the window");
+        let job = *JOB.get_or_init(|| {
+            let Ok(job) = CreateJobObjectW(None, None) else { return 0 };
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let _ = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const std::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+            // Deliberately never closed: Windows closes it when we exit, and
+            // that is what kills the children.
+            job.0 as isize
+        });
+        if job != 0 {
+            let _ = AssignProcessToJobObject(HANDLE(job as _), HANDLE(child.as_raw_handle() as _));
         }
-        // `job` is deliberately never closed: Windows closes it when this
-        // process exits, and that is what kills the children.
     }
+}
+
+/// Put a file on the clipboard the way Explorer's Copy does, so pasting into
+/// Discord, a browser or a folder attaches the file itself.
+pub fn copy_file_to_clipboard(path: &Path) -> anyhow::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT};
+    use windows::Win32::UI::Shell::DROPFILES;
+    const CF_HDROP: u32 = 15;
+
+    anyhow::ensure!(path.is_file(), "the file is gone");
+    // A double-terminated list of paths, here with one entry.
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0, 0]).collect();
+    let header = std::mem::size_of::<DROPFILES>();
+    unsafe {
+        let mem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, header + wide.len() * 2)?;
+        let p = GlobalLock(mem) as *mut u8;
+        anyhow::ensure!(!p.is_null(), "out of memory");
+        let drop = p as *mut DROPFILES;
+        (*drop).pFiles = header as u32;
+        (*drop).fWide = true.into();
+        std::ptr::copy_nonoverlapping(wide.as_ptr(), p.add(header) as *mut u16, wide.len());
+        let _ = GlobalUnlock(mem);
+
+        // Other apps hold the clipboard for a moment while reading it.
+        let mut open = OpenClipboard(None);
+        for _ in 0..10 {
+            if open.is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            open = OpenClipboard(None);
+        }
+        open?;
+        let _ = EmptyClipboard();
+        // On success the clipboard owns `mem`.
+        let set = SetClipboardData(CF_HDROP, Some(HANDLE(mem.0)));
+        let _ = CloseClipboard();
+        set?;
+    }
+    Ok(())
 }
 
 /// Bring `hwnd` to the foreground even when Windows' foreground lock would
@@ -140,16 +188,11 @@ impl log::Log for FileLogger {
     }
     fn log(&self, r: &log::Record) {
         if self.enabled(r.metadata()) && r.target().starts_with("hindsight") {
-            let line = format!("{} {:5} {}\n", chrono_like_now(), r.level(), r.args());
+            let line = format!("{} {:5} {}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"), r.level(), r.args());
             let _ = self.0.lock().unwrap().write_all(line.as_bytes());
         }
     }
     fn flush(&self) {}
-}
-
-fn chrono_like_now() -> String {
-    let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    format!("{}.{:03}", d.as_secs(), d.subsec_millis())
 }
 
 /// Log to <data dir>\hindsight.log (or hindsight-ui.log). Appends, because a

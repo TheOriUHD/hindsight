@@ -5,3 +5,4 @@
 /app/gen
 /dist
 /site/.wrangler
+/cloud/.wrangler

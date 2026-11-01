@@ -11,37 +11,39 @@ document.querySelectorAll("[data-link]").forEach((a) => {
   if (href) a.href = href;
 });
 
-// Header gets a hairline once the page scrolls under it.
-const header = document.querySelector(".site-header");
-const onScroll = () => header.classList.toggle("is-scrolled", scrollY > 8);
-addEventListener("scroll", onScroll, { passive: true });
-onScroll();
-
-// Theme toggle: remembers an explicit choice, otherwise follows the system.
-document.getElementById("theme").addEventListener("click", () => {
-  const root = document.documentElement;
-  const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-  root.dataset.theme = dark ? "light" : "dark";
-  try { localStorage.setItem("theme", root.dataset.theme); } catch {}
+// The hero's F8: same card the app shows, and it marks the buffer as a saved clip.
+const buffer = document.getElementById("buffer");
+const toast = document.getElementById("toast");
+let toastTimer;
+const saveClip = () => {
+  toast.innerHTML = "<strong>Clip saved</strong><span>Counter-Strike 2 · 60s</span>";
+  toast.classList.add("is-on");
+  buffer.classList.add("is-saved");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.classList.remove("is-on");
+    buffer.classList.remove("is-saved");
+  }, 2600);
+};
+document.getElementById("try").addEventListener("click", saveClip);
+addEventListener("keydown", (e) => {
+  if (e.key === "F8" && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+    e.preventDefault();
+    saveClip();
+  }
 });
 
-// Product window tabs.
-const NOTES = {
-  library: "<strong>Library.</strong> Every clip in one folder, grouped by day and by game. Hover a thumbnail to scrub through it before you open it.",
-  player: "<strong>Player.</strong> Drag along the filmstrip and the frame follows your cursor. Set in and out points, save a trimmed copy, or export to fit an upload limit.",
-  settings: "<strong>Settings.</strong> Resolution, frame rate, quality, clip length and the hotkey. Changes apply immediately, and it tells you how much memory your choice can use.",
-};
-const tabs = [...document.querySelectorAll(".tab")];
-tabs.forEach((tab) =>
-  tab.addEventListener("click", () => {
-    tabs.forEach((t) => {
-      const on = t === tab;
-      t.setAttribute("aria-selected", on);
-      document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
-    });
-    document.getElementById("tab-note").innerHTML = NOTES[tab.id.replace("tab-", "")];
-  })
-);
+// The games strip loops by carrying a second copy of its list. Without motion it stays a plain scroller.
+const strip = document.getElementById("strip");
+if (matchMedia("(prefers-reduced-motion: no-preference)").matches) {
+  const row = strip.querySelector(".strip-row");
+  [...row.children].forEach((li) => {
+    const copy = li.cloneNode(true);
+    copy.setAttribute("aria-hidden", "true");
+    row.append(copy);
+  });
+  strip.classList.add("is-rolling");
+}
 
 // Fade sections in as they scroll into view.
 const io = new IntersectionObserver(

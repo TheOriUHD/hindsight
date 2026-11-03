@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Hindsight: instant replay for Windows</title>
-  <meta name="description" content="Press a key, keep the last minute. Hindsight records your screen on the GPU and saves the moment you just had as an MP4. Free, no account, nothing uploaded." />
+  <meta name="description" content="Press a key, keep the last minute. Hindsight records your screen on the GPU and saves the moment you just had as an MP4. Free, no account, nothing uploaded unless you share it." />
   <meta name="theme-color" content="#0a0b0d" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -13,7 +13,7 @@
   <link rel="preload" as="image" type="image/webp" href="/img/hero.webp" imagesrcset="/img/hero-small.webp 960w, /img/hero.webp 1920w" imagesizes="100vw" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Hindsight: instant replay for Windows" />
-  <meta property="og:description" content="Press a key, keep the last minute. Free, no account, nothing uploaded." />
+  <meta property="og:description" content="Press a key, keep the last minute. Free, no account, nothing uploaded unless you share it." />
   <meta property="og:url" content="https://hindsighthq.app/" />
   <meta property="og:image" content="https://hindsighthq.app/img/og.png" />
   <meta name="twitter:card" content="summary_large_image" />
@@ -78,7 +78,7 @@
           <div><dd>&lt;1s</dd><dt>to write a 30-second 4K clip</dt></div>
           <div><dd>0</dd><dt>hooks injected into your game</dt></div>
         </dl>
-        <p class="stats-note">Measured on an RTX 5090 at 4K. Write time is typical, not a guarantee.</p>
+        <p class="stats-note">Measured on a Ryzen 9 9950X3D2 (16 cores) with an RTX 5090, at 4K. Write time is typical, not a guarantee.</p>
         <div class="trio reveal">
           <div><h3>Out of the game process</h3><p>Hindsight uses Windows' own screen capture. Nothing is injected into the game, so it doesn't trip anti-cheat.</p></div>
           <div><h3>Nothing heavy in the background</h3><p>The recorder is a small native process with no browser engine inside. The library window fully closes when you close it.</p></div>
@@ -163,13 +163,13 @@
       <div class="wrap">
         <div class="section-head reveal">
           <h2>What's not in here.</h2>
-          <p class="lead">No feed, no upsell, nothing between you and your clips. They stay on your PC.</p>
+          <p class="lead">No feed, no upsell, nothing between you and your clips. They stay on your PC unless you share one.</p>
         </div>
         <ul class="nope reveal">
           <li><strong>No account</strong><span>Install it and play. There's nothing to sign in to.</span></li>
           <li><strong>No subscription</strong><span>No paid tier and nothing locked.</span></li>
           <li><strong>No ads</strong><span>Not in the app, not on your clips.</span></li>
-          <li><strong>No cloud library</strong><span>Clips are ordinary MP4 files on your disk.</span></li>
+          <li><strong>No silent uploads</strong><span>Clips are ordinary MP4 files on your disk. A clip only goes online when you press Share, and its link expires after 14 days.</span></li>
           <li><strong>No telemetry</strong><span>Logs stay local unless you choose to send a problem report.</span></li>
           <li><strong>No injection</strong><span>Nothing is hooked into your game.</span></li>
         </ul>
@@ -241,6 +241,8 @@
             <li><a data-link="repo" href="https://github.com/TheOriUHD/hindsight">Source code</a></li>
             <li><a data-link="issues" href="https://github.com/TheOriUHD/hindsight/issues">Report an issue</a></li>
             <li><a data-link="releases" href="https://github.com/TheOriUHD/hindsight/releases">Release notes</a></li>
+            <li><a href="/impressum">Impressum</a></li>
+            <li><a href="/datenschutz">Datenschutz</a></li>
             <li><a data-link="license" href="https://github.com/TheOriUHD/hindsight/blob/main/LICENSE">License</a></li>
           </ul>
         </div>

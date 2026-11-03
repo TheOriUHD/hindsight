@@ -19,6 +19,8 @@
       <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" stroke="none"/></symbol>
       <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></symbol>
       <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.2 1.2M14 10a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.2-1.2"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z"/></symbol>
       <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></symbol>
     </defs>
   </svg>
@@ -57,6 +59,8 @@
         <h1 id="clips-title">All clips</h1>
         <span class="sub" id="clip-count"></span>
         <div class="spacer"></div>
+        <button class="btn primary" id="join-go" hidden></button>
+        <button class="btn" id="join">Join clips</button>
         <button class="btn" id="open-folder"><svg class="ic"><use href="#i-folder"/></svg>Open folder</button>
       </header>
       <div class="days" id="days"></div>
@@ -73,6 +77,8 @@
         <input class="title-edit" id="p-title" spellcheck="false" title="Click to rename" />
         <span class="sub" id="p-meta"></span>
         <div class="spacer"></div>
+        <button class="btn primary" id="p-share"><svg class="ic"><use href="#i-link"/></svg><span>Share</span></button>
+        <button class="icon-btn" id="p-fav" title="Favourite (F)"><svg class="ic"><use href="#i-star"/></svg></button>
         <button class="icon-btn" id="p-copy" title="Copy to clipboard (Ctrl+C)"><svg class="ic"><use href="#i-copy"/></svg></button>
         <button class="icon-btn" id="p-external" title="Open in default player"><svg class="ic"><use href="#i-external"/></svg></button>
         <button class="icon-btn" id="p-folder" title="Show in folder"><svg class="ic"><use href="#i-folder"/></svg></button>
@@ -134,6 +140,7 @@
             <option value="h264">H.264</option>
             <option value="av1">AV1</option>
           </select>
+          <label class="check" title="Crops the middle of the frame to 9:16 for TikTok, Shorts and Reels."><input type="checkbox" id="p-vertical" /><span></span>Vertical</label>
           <button class="btn primary" id="p-export"><svg class="ic"><use href="#i-export"/></svg>Export</button>
         </div>
       </div>
@@ -206,9 +213,29 @@
               <option value="300">5 minutes</option>
             </select>
           </div>
-          <div class="row"><div class="lbl">Save clip<small>Keyboard combo or a mouse side button. Works in fullscreen games.</small></div><button type="button" class="btn hotkey" id="hotkey">F8</button></div>
+          <div class="row"><div class="lbl">Save clip<small>Keyboard combo or a mouse side button. Works in fullscreen games.</small></div><button type="button" class="btn hotkey" data-hotkey="hotkey" id="hotkey">F8</button></div>
+          <div class="row"><div class="lbl">Quick save<small>A second key that saves a shorter clip.</small></div>
+            <select name="quick_secs">
+              <option value="5">5 seconds</option>
+              <option value="10">10 seconds</option>
+              <option value="15">15 seconds</option>
+              <option value="20">20 seconds</option>
+              <option value="30">30 seconds</option>
+              <option value="45">45 seconds</option>
+            </select>
+            <button type="button" class="btn hotkey" data-hotkey="quick_hotkey" data-clearable></button>
+          </div>
+          <div class="row"><div class="lbl">Pause or resume<small>Stop recording without opening anything.</small></div><button type="button" class="btn hotkey" data-hotkey="pause_hotkey" data-clearable></button></div>
           <label class="row toggle"><div class="lbl">Sound on save</div><input type="checkbox" name="save_sound" /><i></i></label>
           <label class="row toggle"><div class="lbl">Popup on save<small>Slides in from the screen edge. Not visible in exclusive fullscreen.</small></div><input type="checkbox" name="save_overlay" /><i></i></label>
+        </div>
+
+        <h2>Auto clips</h2>
+        <div class="group">
+          <label class="row toggle"><div class="lbl">Counter-Strike 2<small>Uses Valve's official game events. Adds a small config file to the game's folder; restart CS2 after turning this on.</small></div><input type="checkbox" name="auto_cs2" /><i></i></label>
+          <label class="row toggle"><div class="lbl">Dota 2<small>Uses Valve's official game events. Adds a small config file to the game's folder; restart Dota 2 after turning this on.</small></div><input type="checkbox" name="auto_dota2" /><i></i></label>
+          <label class="row toggle"><div class="lbl">League of Legends<small>Uses Riot's Live Client Data API, which League runs on this PC during a game.</small></div><input type="checkbox" name="auto_lol" /><i></i></label>
+          <label class="row toggle"><div class="lbl">Clip my deaths too</div><input type="checkbox" name="auto_deaths" /><i></i></label>
         </div>
 
         <h2>Sharing</h2>
@@ -251,13 +278,24 @@
         <h2>Storage</h2>
         <div class="group">
           <div class="row"><div class="lbl">Clips folder<small class="path" id="out-dir"></small></div><button type="button" class="btn" id="pick-dir">Change</button></div>
+          <div class="row"><div class="lbl">Storage limit<small>Above this, the oldest clips go to the Recycle Bin. Favourites are never removed.</small></div>
+            <select name="storage_limit_gb">
+              <option value="0">No limit</option>
+              <option value="10">10 GB</option>
+              <option value="25">25 GB</option>
+              <option value="50">50 GB</option>
+              <option value="100">100 GB</option>
+              <option value="250">250 GB</option>
+              <option value="500">500 GB</option>
+            </select>
+          </div>
           <label class="row toggle"><div class="lbl">Start with Windows<small>Starts quietly in the tray.</small></div><input type="checkbox" name="start_with_windows" /><i></i></label>
         </div>
 
         <h2>About</h2>
         <div class="group">
           <div class="row"><div class="lbl">Hindsight <span id="version"></span>
-              <small>&copy; 2026 <a href="#" data-url="https://github.com/TheOriUHD">TheOriUHD</a>. No accounts. Your clips stay on your PC.</small>
+              <small>&copy; 2026 <a href="#" data-url="https://github.com/TheOriUHD">TheOriUHD</a>. No accounts. Clips stay on your PC unless you press Share.</small>
             </div>
             <button type="button" class="btn" data-url="https://github.com/TheOriUHD/hindsight">GitHub</button>
             <button type="button" class="btn" data-url="https://hindsighthq.app">Website</button>
@@ -268,6 +306,10 @@
           <div class="row"><div class="lbl">Updates<small id="update-status">Asks hindsighthq.app for the latest version.</small></div><button type="button" class="btn" id="update-check">Check now</button></div>
           <label class="row toggle"><div class="lbl">Check for updates automatically<small>Never installs anything without your click.</small></div><input type="checkbox" name="check_updates" /><i></i></label>
           <div class="row"><div class="lbl">Report a problem<small>Sends a description, system details and logs. You can read all of it first.</small></div><button type="button" class="btn" id="report-open">Report a problem</button></div>
+          <div class="row"><div class="lbl">Legal<small>Operator details and how Hindsight handles data (in German).</small></div>
+            <button type="button" class="btn" data-url="https://hindsighthq.app/impressum">Impressum</button>
+            <button type="button" class="btn" data-url="https://hindsighthq.app/datenschutz">Privacy</button>
+          </div>
           <div class="row"><div class="lbl">Logs<small>Stored on this PC. They only leave it in a report you send.</small></div><button type="button" class="btn" id="open-logs">Open logs</button></div>
         </div>
       </form>
@@ -292,6 +334,18 @@
       <div class="report-foot">
         <button type="button" class="btn" id="report-cancel">Cancel</button>
         <button type="submit" class="btn primary" id="report-send" disabled>Send</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="report" id="share-ok">
+    <form method="dialog">
+      <h2>Share this clip?</h2>
+      <p class="sub">Hindsight uploads the selection and gives you a link. Anyone with the link can watch it, react to it and download it. It's deleted after 14 days, and you can remove it sooner.</p>
+      <p class="sub">Only share clips you have the right to share. <a href="#" data-url="https://clips.hindsighthq.app/terms">Read the terms</a></p>
+      <div class="report-foot">
+        <button type="button" class="btn" id="share-no">Cancel</button>
+        <button type="button" class="btn primary" id="share-yes">Upload and copy link</button>
       </div>
     </form>
   </dialog>

@@ -1,0 +1,50 @@
+/* The share page, in the website's colours and title face. */
+@font-face { font-family: "Barlow Condensed"; src: url("/barlow-condensed-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+:root { color-scheme: dark; --bg: #0a0b0d; --panel: #131417; --line: rgba(255, 255, 255, 0.1); --text: #f2f3f5; --text-2: #b0b4bd; --accent: #e5484d; --fill: #d42f36; }
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--text); font: 400 16px/1.5 system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; max-width: 1100px; margin-inline: auto; padding: 16px; }
+.brand { font: 700 1.5rem/1 "Barlow Condensed", "Arial Narrow", sans-serif; text-transform: uppercase; letter-spacing: 0.03em; text-decoration: none; }
+.get { padding: 9px 14px; border-radius: 4px; background: var(--fill); color: #fff; font-size: 0.875rem; font-weight: 600; text-decoration: none; }
+.get:hover { background: var(--accent); }
+main { flex: 1; width: 100%; max-width: 1100px; margin-inline: auto; padding: 0 16px 40px; }
+video { display: block; width: 100%; height: auto; max-height: 72vh; background: #000; border-radius: 4px; }
+.info { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-top: 16px; }
+h1 { margin: 0; font: 700 clamp(1.75rem, 4vw, 2.5rem)/1.05 "Barlow Condensed", "Arial Narrow", sans-serif; text-transform: uppercase; overflow-wrap: anywhere; }
+.info p { margin: 6px 0 0; color: var(--text-2); font-size: 0.9375rem; }
+button { font: inherit; color: inherit; cursor: pointer; }
+.actions { flex: none; display: flex; gap: 8px; }
+.copy, .flag { height: 40px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+.copy { padding: 0 14px; font-size: 0.875rem; font-weight: 600; }
+.flag { width: 40px; display: grid; place-items: center; padding: 0; color: var(--text-2); }
+.flag svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.copy:hover, .flag:hover { border-color: var(--text-2); color: var(--text); }
+
+/* Every reaction the same size, emoji over its count, so the row is even. */
+.reactions { display: grid; grid-template-columns: repeat(5, minmax(0, 64px)); gap: 8px; margin-top: 18px; }
+.reactions button { display: grid; justify-items: center; align-content: center; gap: 2px; height: 64px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+.reactions button:hover { border-color: var(--text-2); }
+.reactions button[aria-pressed="true"] { border-color: var(--accent); background: rgba(229, 72, 77, 0.16); }
+.reactions span { font-size: 1.5rem; line-height: 1; }
+.reactions b { font-weight: 600; font-size: 0.8125rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.reactions .zero b { color: var(--text-2); font-weight: 400; }
+
+dialog { width: min(440px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+dialog h2 { margin: 0 0 4px; font: 700 1.75rem/1 "Barlow Condensed", "Arial Narrow", sans-serif; text-transform: uppercase; }
+dialog form { display: grid; gap: 14px; }
+dialog label { display: grid; gap: 4px; color: var(--text-2); font-size: 0.875rem; }
+dialog select, dialog textarea, dialog input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--text); font: inherit; }
+dialog p { margin: 0; min-height: 1.5em; color: var(--text-2); font-size: 0.875rem; }
+.dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+.dialog-buttons button { height: 40px; padding: 0 16px; border: 0; border-radius: 4px; background: var(--fill); color: #fff; font-weight: 600; }
+.dialog-buttons .secondary { border: 1px solid var(--line); background: transparent; color: var(--text); }
+.dialog-buttons button:disabled { opacity: 0.5; cursor: default; }
+.gone { padding-block: 18vh; text-align: center; }
+.gone p { color: var(--text-2); }
+.terms { max-width: 720px; }
+.terms h2 { margin: 28px 0 8px; font: 700 1.5rem/1.1 "Barlow Condensed", "Arial Narrow", sans-serif; text-transform: uppercase; }
+.terms p, .terms li { color: var(--text-2); }
+footer { display: flex; flex-wrap: wrap; gap: 8px 20px; width: 100%; max-width: 1100px; margin-inline: auto; padding: 16px; color: var(--text-2); font-size: 0.8125rem; }

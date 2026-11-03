@@ -380,6 +380,12 @@ fn open_session(s: &Settings) -> Result<Session> {
     })
 }
 
+/// Save, quick save, pause: the order `hotkey` reports them back in.
+fn bindings(s: &Settings) -> Vec<Option<hotkey::Binding>> {
+    let main = hotkey::Binding::parse(&s.hotkey).or_else(|_| hotkey::Binding::parse("F8")).ok();
+    vec![main, hotkey::Binding::parse(&s.quick_hotkey).ok(), hotkey::Binding::parse(&s.pause_hotkey).ok()]
+}
+
 pub struct Recorder {
     lifecycle: Mutex<()>,
     session: Mutex<Option<Session>>,
@@ -400,10 +406,12 @@ impl Recorder {
             on_clip: Box::new(on_clip),
         });
         let weak: Weak<Recorder> = Arc::downgrade(&rec);
-        let binding = hotkey::Binding::parse(&settings.hotkey).unwrap_or_else(|_| hotkey::Binding::parse("F8").unwrap());
-        hotkey::start(binding, move || {
-            if let Some(r) = weak.upgrade() {
-                r.save_clip_async();
+        hotkey::start(bindings(&settings), move |slot| {
+            let Some(r) = weak.upgrade() else { return };
+            match slot {
+                0 => r.save_clip_async(),
+                1 => r.save_quick_async(),
+                _ => r.toggle_async(),
             }
         });
         rec
@@ -452,9 +460,12 @@ impl Recorder {
     /// Persist new settings; restarts capture only if something it uses changed.
     pub fn apply_settings(&self, new: Settings) -> Result<()> {
         let new = new.sanitized();
-        if !new.hotkey.is_empty() {
-            hotkey::set_binding(hotkey::Binding::parse(&new.hotkey)?);
+        for key in [&new.hotkey, &new.quick_hotkey, &new.pause_hotkey] {
+            if !key.is_empty() {
+                hotkey::Binding::parse(key)?;
+            }
         }
+        hotkey::set_bindings(bindings(&new));
         let old = std::mem::replace(&mut *self.settings.lock().unwrap(), new.clone());
         new.save()?;
         let restart = old.enabled != new.enabled
@@ -494,8 +505,30 @@ impl Recorder {
     }
 
     pub fn save_clip_async(self: &Arc<Self>) {
+        self.save_async(None);
+    }
+
+    pub fn save_quick_async(self: &Arc<Self>) {
+        self.save_async(Some(self.settings().quick_secs));
+    }
+
+    fn toggle_async(self: &Arc<Self>) {
         let r = self.clone();
-        std::thread::spawn(move || match r.save_clip() {
+        std::thread::spawn(move || {
+            let settings = r.settings();
+            let on = !settings.enabled;
+            if settings.save_overlay {
+                overlay::show(if on { overlay::Kind::Resumed } else { overlay::Kind::Paused }, "", 0);
+            }
+            if let Err(e) = r.set_enabled(on) {
+                log::error!("pause hotkey: {e:#}");
+            }
+        });
+    }
+
+    fn save_async(self: &Arc<Self>, secs: Option<u32>) {
+        let r = self.clone();
+        std::thread::spawn(move || match r.save_with_length(secs) {
             Ok(p) => log::info!("saved {}", p.display()),
             Err(e) => {
                 log::error!("save clip: {e:#}");
@@ -507,7 +540,21 @@ impl Recorder {
     }
 
     pub fn save_clip(&self) -> Result<PathBuf> {
-        let t = Instant::now();
+        self.save_with_length(None)
+    }
+
+    /// The recorder's clock, for timing an automatic clip.
+    pub fn now(&self) -> i64 {
+        now_100ns()
+    }
+
+    /// An automatic clip: `secs` long, ending at `end` (from `now`). Never
+    /// makes a sound or a popup, because it happens in the middle of a game.
+    pub fn save_event_clip(&self, game: &str, label: &str, end: i64, secs: f64) -> Result<PathBuf> {
+        self.write_clip(game, Some(label), end, Some((secs * 1e6) as i64))
+    }
+
+    fn save_with_length(&self, length: Option<u32>) -> Result<PathBuf> {
         let title = feedback::foreground_title();
         let pressed = now_100ns();
         let settings = self.settings();
@@ -522,7 +569,8 @@ impl Recorder {
             if r.bytes() == 0 {
                 anyhow::bail!("Nothing recorded yet");
             }
-            (s.monitor_handle, r.span_secs().min(s.clip_us as f64 / 1e6))
+            let longest = length.map_or(s.clip_us as f64 / 1e6, |v| (v as f64).min(s.clip_us as f64 / 1e6));
+            (s.monitor_handle, r.span_secs().min(longest))
         };
         if settings.save_sound {
             feedback::play_chime();
@@ -534,20 +582,33 @@ impl Recorder {
         // The clip ends at the key press; give the audio mixer (200 ms behind)
         // and the encoder's lookahead time to deliver that moment.
         std::thread::sleep(Duration::from_millis(300));
+        self.write_clip(&title, None, pressed, length.map(|v| v as i64 * 1_000_000))
+    }
+
+    /// "<title> <date> <time>[ <label>].mp4", which the library reads the game
+    /// back from. `end` is on the recorder clock, `want_us` capped by the buffer.
+    fn write_clip(&self, title: &str, label: Option<&str>, end: i64, want_us: Option<i64>) -> Result<PathBuf> {
+        let t = Instant::now();
+        let settings = self.settings();
         let (packets, base, params, scrub) = {
             let session = self.session.lock().unwrap();
             let s = session.as_ref().context("Recording stopped while saving")?;
-            let end = (pressed - s.origin) / 10;
-            let (packets, base) = s.replay.lock().unwrap().snapshot(s.clip_us, end).context("Nothing recorded yet")?;
+            let end = (end - s.origin) / 10;
+            let clip_us = want_us.map_or(s.clip_us, |w| w.min(s.clip_us));
+            let (packets, base) = s.replay.lock().unwrap().snapshot(clip_us, end).context("Nothing recorded yet")?;
             let scrub = s.scrub_params.clone().map(|p| (s.scrub_replay.lock().unwrap().range(base, end), p));
             (packets, base, s.params.clone(), scrub)
         };
         std::fs::create_dir_all(&settings.output_dir)?;
         let stamp = chrono::Local::now().format("%Y-%m-%d %H-%M-%S");
-        let mut path = settings.output_dir.join(format!("{title} {stamp}.mp4"));
+        let stem = match label {
+            Some(l) => format!("{title} {stamp} {l}"),
+            None => format!("{title} {stamp}"),
+        };
+        let mut path = settings.output_dir.join(format!("{stem}.mp4"));
         let mut n = 2;
         while path.exists() {
-            path = settings.output_dir.join(format!("{title} {stamp} ({n}).mp4"));
+            path = settings.output_dir.join(format!("{stem} ({n}).mp4"));
             n += 1;
         }
         let refs: Vec<&StreamParams> = params.iter().collect();

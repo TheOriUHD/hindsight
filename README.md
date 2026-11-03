@@ -38,7 +38,7 @@ Clipping tools tend to grow accounts, feeds, cloud uploads and an Electron windo
 
 - **Always on, nearly free.** Frames go from the screen to the GPU's video encoder without ever being copied to the CPU. The recorder process doesn't load a browser engine.
 - **Instant saves.** The popup confirms the moment you press the key. The clip is cut from what is already encoded and written in one pass, with no re-encode.
-- **Your files.** Clips are plain MP4s in `Videos\Hindsight`. They never leave your PC.
+- **Your files.** Clips are plain MP4s in `Videos\Hindsight`. They only leave your PC when you press Share.
 
 <br>
 
@@ -60,6 +60,8 @@ Clipping tools tend to grow accounts, feeds, cloud uploads and an Electron windo
 - **Up to 240 fps** at native resolution, or downscaled to 1440p, 1080p or 720p.
 - **Clip length** from 15 seconds to 5 minutes, kept in memory.
 - **Audio sources**: everything on an output device, or only the apps you pick (the game without Discord or music), plus a microphone. Choose the devices, and keep each source on its own track next to the mix.
+- **Quick save and pause keys**: a second key that saves a shorter clip, and one that pauses or resumes recording.
+- **Auto clips** for Counter-Strike 2, Dota 2 and League of Legends, from each game's official event feed. Kills close together become one clip ("Double kill"), wins too, and deaths if you want them. They're saved silently, with no sound or popup in the middle of a game.
 - **Tray popout**: click the tray icon for status, save, pause and the settings you change most.
 
 </td>
@@ -75,6 +77,10 @@ Clipping tools tend to grow accounts, feeds, cloud uploads and an Electron windo
 - **Instant scrubbing**: each clip carries a small all-keyframe preview, so dragging the timeline shows every frame as you move.
 - **Trim** with handles or `I` / `O`. A trimmed copy saves instantly by cutting on keyframes, or frame-accurately with a GPU re-encode.
 - **Export presets** for where it's going: Discord (20 MB), Nitro Basic (50 MB), Nitro (1 GB), WhatsApp, email, X, or any size. The export picks the resolution and frame rate the size can carry, and AV1 is one click away when the other side can play it. Exports go to an `Exports` subfolder, so they stay out of your library.
+- **Share links.** Press Share and Hindsight uploads the selection as 1080p60 and copies a link that plays right inside Discord, with reactions and a report button. Links last 14 days, and you can remove one sooner.
+- **Vertical export** crops the middle of the frame to 9:16 for TikTok, Shorts and Reels.
+- **Join clips** into one montage, in the order you pick them.
+- **Favourites**, and an optional **storage limit** that sends the oldest clips to the Recycle Bin. Favourites are never removed.
 - **Copy to clipboard.** Paste a clip straight into Discord or anywhere else that takes files. Pick the preset it's encoded with in Settings, or copy the original.
 - **Library**: grouped by day, filtered by game, hover a thumbnail to skim it.
 
@@ -114,6 +120,7 @@ No account and no telemetry. Clips, settings and logs stay on your PC: settings,
 Hindsight goes online for two things:
 
 - **Update checks.** A few times a day it asks `api.hindsighthq.app` for the latest version. Nothing is installed without your click, updates are signature-checked, and you can turn the check off in Settings.
+- **Sharing.** Only when you press Share. The clip, its title and game are uploaded to `clips.hindsighthq.app`, where anyone with the link can watch it. Links last 14 days, and you can remove one sooner.
 - **Problem reports.** Only when you open *Report a problem* and press Send. It sends your description, system details (Windows, CPU, RAM, GPUs and drivers, displays, audio devices), settings and logs. You can read all of it before sending. Your user name, clip names and clip paths are removed, and IP addresses aren't stored.
 
 <br>
@@ -121,7 +128,7 @@ Hindsight goes online for two things:
 ## What Hindsight won't do
 
 - **Inject into games.** No hooks, no DLLs, no in-game overlay. That keeps it safe with anti-cheat (Vanguard, Easy Anti-Cheat, BattlEye) and is why the popup can't appear over exclusive-fullscreen games (the chime still plays).
-- **Upload anything.** Sharing is up to you: copy a clip, or export to a size, and paste it where you want it.
+- **Upload without asking.** Nothing goes online unless you press Share on a clip.
 - **Run a browser next to your game.** The library window is a separate process that exits completely when you close it.
 
 <br>

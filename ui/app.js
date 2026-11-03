@@ -14,6 +14,7 @@ let status = null;
 let monitors = [];
 let clips = [];
 let gameFilter = null;
+const FAVOURITES = "\0favourites";
 
 /* ---------- formatting ---------- */
 const fmtTime = (s, tenths = true) => {
@@ -166,14 +167,18 @@ async function loadClips(highlight) {
 function renderGames() {
   const counts = new Map();
   for (const c of clips) counts.set(c.game, (counts.get(c.game) || 0) + 1);
-  if (gameFilter && !counts.has(gameFilter)) gameFilter = null;
+  const liked = clips.filter((c) => c.favorite).length;
+  if (gameFilter === FAVOURITES ? !liked : gameFilter && !counts.has(gameFilter)) gameFilter = null;
   const box = $("#games");
   box.replaceChildren();
-  if (counts.size < 2) return;
-  for (const [game, n] of [...counts].sort((a, b) => b[1] - a[1])) {
+  const rows = [...counts].sort((a, b) => b[1] - a[1]);
+  if (rows.length < 2) rows.length = 0;
+  if (liked) rows.unshift([FAVOURITES, liked]);
+  for (const [game, n] of rows) {
     const b = el("button", "game" + (gameFilter === game ? " active" : ""));
-    b.append(el("span", null, game), el("span", "count", n));
-    b.title = game;
+    const name = game === FAVOURITES ? "Favourites" : game;
+    b.append(el("span", null, name), el("span", "count", n));
+    b.title = name;
     b.onclick = () => {
       gameFilter = gameFilter === game ? null : game;
       renderClips();
@@ -185,9 +190,10 @@ function renderGames() {
 
 function renderClips(highlight) {
   renderGames();
-  const shown = clips.filter((c) => !gameFilter || c.game === gameFilter);
+  const faves = gameFilter === FAVOURITES;
+  const shown = clips.filter((c) => !gameFilter || (faves ? c.favorite : c.game === gameFilter));
   $("#nav-count").textContent = clips.length || "";
-  $("#clips-title").textContent = gameFilter || "All clips";
+  $("#clips-title").textContent = faves ? "Favourites" : gameFilter || "All clips";
   const total = shown.reduce((a, c) => a + c.size, 0);
   $("#clip-count").textContent = shown.length ? `${shown.length} clip${shown.length === 1 ? "" : "s"} · ${fmtSize(total)}` : "";
   $("#empty").hidden = clips.length > 0;
@@ -219,6 +225,13 @@ function card(c, isNew) {
   img.alt = "";
   if (c.thumb) img.src = convertFileSrc(c.thumb);
   else img.style.visibility = "hidden";
+  const fav = el("button", "fav" + (c.favorite ? " on" : ""));
+  fav.title = c.favorite ? "Remove from favourites" : "Add to favourites";
+  fav.innerHTML = icon("star");
+  fav.onclick = (e) => {
+    e.stopPropagation();
+    toggleFavorite(c);
+  };
   const copy = el("button", "copy");
   copy.title = "Copy to clipboard";
   copy.innerHTML = icon("copy");
@@ -226,10 +239,16 @@ function card(c, isNew) {
     e.stopPropagation();
     copyClip(c.path, 0, c.duration, true);
   };
-  th.append(img, el("span", "dur", fmtTime(c.duration, false)), copy);
-  d.append(th, el("div", "name", gameFilter ? fmtClock(c.created) : c.game), el("div", "meta", `${gameFilter ? "" : fmtClock(c.created) + " · "}${fmtSize(c.size)}`));
+  th.append(img, el("span", "dur", fmtTime(c.duration, false)), fav, copy);
+  const named = gameFilter && gameFilter !== FAVOURITES;
+  d.append(th, el("div", "name", named ? fmtClock(c.created) : c.game), el("div", "meta", `${named ? "" : fmtClock(c.created) + " · "}${fmtSize(c.size)}`));
   d.title = c.name;
-  d.onclick = () => openPlayer(c);
+  const order = picking?.indexOf(c.path) ?? -1;
+  if (order >= 0) {
+    d.classList.add("picked");
+    th.append(el("span", "pick-no", order + 1));
+  }
+  d.onclick = () => (picking ? togglePick(c) : openPlayer(c));
   hoverScrub(th, c);
   return d;
 }
@@ -262,6 +281,51 @@ function hoverScrub(th, c) {
   });
 }
 
+async function toggleFavorite(c) {
+  const on = !c.favorite;
+  try {
+    await invoke("set_favorite", { path: c.path, on });
+  } catch (e) {
+    return toast(`Couldn't save that: ${e}`, { error: true });
+  }
+  c.favorite = on;
+  const listed = clips.find((x) => x.path === c.path);
+  if (listed) listed.favorite = on;
+  if (cur?.path === c.path) drawFavorite();
+  renderClips();
+}
+
+/* Join: pick clips in the order they should play. */
+let picking = null;
+function drawJoin() {
+  $("#join").textContent = picking ? "Cancel" : "Join clips";
+  $("#join-go").hidden = !picking || picking.length < 2;
+  if (picking) $("#join-go").textContent = `Join ${picking.length} clips`;
+}
+function stopPicking() {
+  picking = null;
+  drawJoin();
+  renderClips();
+}
+function togglePick(c) {
+  const i = picking.indexOf(c.path);
+  if (i >= 0) picking.splice(i, 1);
+  else picking.push(c.path);
+  drawJoin();
+  renderClips();
+}
+$("#join").onclick = () => {
+  if (picking) return stopPicking();
+  picking = [];
+  drawJoin();
+  toast("Click clips in the order they should play");
+};
+$("#join-go").onclick = () => {
+  const paths = picking;
+  stopPicking();
+  runJob("Montage", "join_clips", { paths }, { verb: "Joining" });
+};
+
 listen("thumb", (e) => {
   const [clip, thumb] = e.payload;
   const c = clips.find((x) => x.path === clip);
@@ -286,8 +350,20 @@ function setPlayIcon() {
   $("#p-play").innerHTML = icon(video.paused ? "play" : "pause");
 }
 
+function drawShare() {
+  $("#p-share span").textContent = cur?.share_url ? "Copy link" : "Share";
+  $("#p-share").title = cur?.share_url ? "Copy this clip's link" : "Upload the selection and copy a link";
+}
+
+function drawFavorite() {
+  drawShare();
+  $("#p-fav").classList.toggle("on", !!cur?.favorite);
+  $("#p-fav").title = cur?.favorite ? "Remove from favourites (F)" : "Add to favourites (F)";
+}
+
 function openPlayer(c) {
   cur = c;
+  drawFavorite();
   $("#p-title").value = c.name;
   $("#p-meta").textContent = `${dayLabel(c.created)}, ${fmtClock(c.created)} · ${fmtSize(c.size)}`;
   $("#video-error").hidden = true;
@@ -501,6 +577,66 @@ $("#p-play").onclick = () => (video.paused ? video.play() : video.pause());
 $("#p-back").onclick = () => show("clips");
 $("#p-external").onclick = $("#p-external2").onclick = () => cur && invoke("open_external", { path: cur.path });
 $("#p-folder").onclick = () => cur && invoke("show_in_folder", { path: cur.path });
+$("#p-fav").onclick = () => cur && toggleFavorite(cur);
+
+/* Sharing is the one thing that leaves this PC, so the first time always asks. */
+// The recorder side writes the clipboard, so WebView2 never asks for permission.
+const copyText = (text) => invoke("copy_text", { text });
+async function linkReady(c, url) {
+  try {
+    await copyText(url);
+  } catch (e) {
+    return toast(`Couldn't copy the link: ${e}`, { error: true });
+  }
+  toast("Link copied. It works for 14 days.", {
+    action: {
+      label: "Remove",
+      run: async () => {
+        try {
+          await invoke("unshare_clip", { path: c.path });
+          c.share_url = null;
+          const listed = clips.find((x) => x.path === c.path);
+          if (listed) listed.share_url = null;
+          drawShare();
+          toast("Link removed");
+        } catch (e) {
+          toast(`Couldn't remove it: ${e}`, { error: true });
+        }
+      },
+    },
+  });
+}
+function startShare() {
+  const c = cur;
+  runJob("Share", "share_clip", { path: c.path, start: trim.start, end: trim.end, title: c.name, game: c.game }, {
+    verb: "Preparing",
+    done: (url) => {
+      c.share_url = url;
+      const listed = clips.find((x) => x.path === c.path);
+      if (listed) listed.share_url = url;
+      drawShare();
+      linkReady(c, url);
+    },
+  });
+}
+$("#p-share").onclick = () => {
+  if (!cur) return;
+  if (cur.share_url) return linkReady(cur, cur.share_url);
+  let agreed = false;
+  try {
+    agreed = localStorage.getItem("hs-share-ok") === "1";
+  } catch {}
+  if (agreed) startShare();
+  else $("#share-ok").showModal();
+};
+$("#share-no").onclick = () => $("#share-ok").close();
+$("#share-yes").onclick = () => {
+  $("#share-ok").close();
+  try {
+    localStorage.setItem("hs-share-ok", "1");
+  } catch {}
+  startShare();
+};
 
 $("#p-delete").onclick = async () => {
   if (!cur || !confirm(`Move "${cur.name}" to the Recycle Bin?`)) return;
@@ -555,7 +691,7 @@ async function runJob(label, cmd, args, { verb = null, done = null } = {}) {
   if (busy) return;
   busy = true;
   jobVerb = verb;
-  document.querySelectorAll("#p-trim, #p-export").forEach((b) => (b.disabled = true));
+  document.querySelectorAll("#p-trim, #p-export, #p-share").forEach((b) => (b.disabled = true));
   toast(`${verb || label}…`, { progress: 0, sticky: true, cancel: true });
   try {
     const out = await invoke(cmd, args);
@@ -570,11 +706,12 @@ async function runJob(label, cmd, args, { verb = null, done = null } = {}) {
   }
   busy = false;
   jobVerb = null;
-  document.querySelectorAll("#p-trim, #p-export").forEach((b) => (b.disabled = false));
+  document.querySelectorAll("#p-trim, #p-export, #p-share").forEach((b) => (b.disabled = false));
 }
 let jobVerb = null;
 listen("progress", (e) => {
   if (e.payload.job === "update") return toast(`Downloading update… ${Math.round(e.payload.pct * 100)}%`, { progress: e.payload.pct, sticky: true });
+  if (e.payload.job === "upload") return toast("Uploading…", { sticky: true });
   if (busy && !cancelling) toast(`${jobVerb || (e.payload.job === "export" ? "Exporting" : "Trimming")}… ${Math.round(e.payload.pct * 100)}%`, { progress: e.payload.pct, sticky: true, cancel: true });
 });
 let cancelling = false;
@@ -621,6 +758,7 @@ function exportPlan() {
   const srcFps = Math.min(status?.fps || 60, 60);
   if (p.mb == null) return { text: `${Math.min(srcH, 2160)}p ${srcFps} fps, high quality` };
   const av1 = $("#p-codec").value === "av1";
+  const aspect = $("#p-vertical").checked ? 9 / 16 : 16 / 9;
   const total = (p.mb * 8000 * 0.95) / dur;
   const audio = total < 1500 ? 64 : total < 6000 ? 96 : 160;
   const vid = Math.max(100, total - audio);
@@ -629,7 +767,7 @@ function exportPlan() {
   let pick = [Math.min(360, srcH), Math.min(30, srcFps)];
   for (const [h0, f0] of ladder) {
     const h = Math.min(h0, srcH), f = Math.min(f0, srcFps);
-    if ((vid * 1000) / ((h * 16) / 9 * h * f) >= minBpp) { pick = [h, f]; break; }
+    if ((vid * 1000) / (h * aspect * h * f) >= minBpp) { pick = [h, f]; break; }
   }
   const warn = p.maxDur && dur > p.maxDur ? `Over ${fmtTime(p.maxDur, false)}: trim it first` : null;
   return { text: warn || `${pick[0]}p ${pick[1]} fps`, warn: !!warn, tiny: pick[0] < 540 };
@@ -645,7 +783,7 @@ function updateExportHint() {
   hint.title = plan.tiny ? "The selection is long for this size limit. A shorter selection looks sharper." : "";
   $("#p-export").disabled = busy || !!plan.warn;
 }
-for (const id of ["#p-preset", "#p-codec", "#p-custom-mb"]) {
+for (const id of ["#p-preset", "#p-codec", "#p-custom-mb", "#p-vertical"]) {
   $(id).addEventListener("input", () => {
     try {
       localStorage.setItem("hs-export", JSON.stringify({ preset: $("#p-preset").value, codec: $("#p-codec").value, mb: $("#p-custom-mb").value }));
@@ -665,13 +803,15 @@ video.addEventListener("loadedmetadata", updateExportHint);
 
 $("#p-export").onclick = () => {
   const p = presetTarget();
+  const vertical = $("#p-vertical").checked;
   runJob("Export", "export_clip", {
     path: cur.path,
     start: trim.start,
     end: trim.end,
     targetMb: p.mb,
     codec: $("#p-codec").value,
-    label: p.file,
+    label: vertical ? `${p.file} Vertical` : p.file,
+    vertical,
   }, {
     done: (out) => toast("Export saved to the Exports folder", { action: { label: "Show", run: () => invoke("show_in_folder", { path: out }) } }),
   });
@@ -727,6 +867,10 @@ document.addEventListener("keydown", (e) => {
     case "Escape":
       show("clips");
       break;
+    case "f":
+    case "F":
+      toggleFavorite(cur);
+      break;
     case "i":
     case "I":
       trim.start = Math.min(at, trim.end - 0.2);
@@ -750,8 +894,8 @@ document.addEventListener("keydown", (e) => {
 
 /* ---------- settings ---------- */
 const form = $("#settings");
-const FIELDS = ["monitor", "max_height", "fps", "quality", "codec", "capture_method", "check_updates", "copy_preset", "buffer_secs", "save_sound", "save_overlay", "desktop_audio", "microphone", "start_with_windows", "desktop_mode", "output_device", "input_device", "separate_tracks"];
-const NUMERIC = ["fps", "max_height", "buffer_secs"];
+const FIELDS = ["monitor", "max_height", "fps", "quality", "codec", "capture_method", "check_updates", "copy_preset", "buffer_secs", "quick_secs", "storage_limit_gb", "auto_cs2", "auto_dota2", "auto_lol", "auto_deaths", "save_sound", "save_overlay", "desktop_audio", "microphone", "start_with_windows", "desktop_mode", "output_device", "input_device", "separate_tracks"];
+const NUMERIC = ["fps", "max_height", "buffer_secs", "quick_secs", "storage_limit_gb"];
 const QUALITY = {
   balanced: "Smaller files. Fine for most games.",
   high: "Hard to tell apart from the original.",
@@ -772,7 +916,7 @@ function fillSettings() {
     if (field.type === "checkbox") field.checked = !!v;
     else field.value = v == null ? "" : String(v);
   }
-  $("#hotkey").textContent = settings.hotkey;
+  document.querySelectorAll("[data-hotkey]").forEach((b) => (b.textContent = settings[b.dataset.hotkey] || "Set key"));
   $("#save-key").textContent = settings.hotkey;
   $("#empty-key").textContent = settings.hotkey;
   $("#empty-secs").textContent = settings.buffer_secs;
@@ -1036,21 +1180,23 @@ function combo(e, key) {
   parts.push(key);
   return parts.join("+");
 }
-$("#hotkey").addEventListener("click", () => {
-  const b = $("#hotkey");
+document.querySelectorAll("[data-hotkey]").forEach((b) => b.addEventListener("click", () => {
+  const field = b.dataset.hotkey;
+  const clearable = "clearable" in b.dataset;
   b.classList.add("listening");
-  b.textContent = "Press a key…";
+  b.textContent = clearable && settings[field] ? "Press a key, or Delete to clear" : "Press a key…";
   const done = (value) => {
     window.removeEventListener("keydown", onKey, true);
     window.removeEventListener("mousedown", onMouse, true);
     b.classList.remove("listening");
-    if (value && value !== settings.hotkey) pushSettings({ ...settings, hotkey: value });
-    else b.textContent = settings.hotkey;
+    if (value != null && value !== settings[field]) pushSettings({ ...settings, [field]: value });
+    else b.textContent = settings[field] || "Set key";
   };
   const onKey = (e) => {
     e.preventDefault();
     e.stopPropagation();
     if (e.key === "Escape") return done(null);
+    if (clearable && (e.key === "Delete" || e.key === "Backspace")) return done("");
     if (MODS.includes(e.key)) return;
     done(combo(e, keyName(e)));
   };
@@ -1063,7 +1209,7 @@ $("#hotkey").addEventListener("click", () => {
   };
   window.addEventListener("keydown", onKey, true);
   window.addEventListener("mousedown", onMouse, true);
-});
+}));
 
 /* ---------- boot ---------- */
 (async function boot() {

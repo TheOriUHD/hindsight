@@ -240,6 +240,15 @@ kbd { padding: 0.14em 0.5em; border-radius: 3px; border: 1px solid var(--line-st
 .foot a:hover { color: var(--text); text-decoration: underline; }
 .legal { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line-soft); max-width: 46rem; }
 
+/* Impressum and privacy policy */
+.legal-page { max-width: 760px; padding-block: 48px 80px; }
+.legal-page h1 { font-size: clamp(2.5rem, 6vw, 3.5rem); }
+.legal-page h2 { margin: 36px 0 10px; font-size: 1.5rem; line-height: 1.1; }
+.legal-page p { margin-bottom: 12px; color: var(--text-2); }
+.legal-page a { color: var(--text); }
+.legal-date { margin-top: 32px; }
+.legal-links { margin-top: 24px; }
+
 /* Scroll entry: only with scripting on, only for motion-tolerant visitors */
 @media (prefers-reduced-motion: no-preference) {
   .js .reveal { opacity: 0; transform: translateY(12px); transition: opacity 500ms var(--ease), transform 500ms var(--ease); }

@@ -8,8 +8,10 @@
 //!   the process and frees all WebView2 memory. Talks to the recorder via `ipc`.
 
 mod clips;
+mod events;
 mod ipc;
 mod report;
+mod share;
 mod system;
 mod tray;
 mod ui;

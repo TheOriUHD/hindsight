@@ -1,0 +1,32 @@
+{
+  // Shared clips, kept apart from hindsight-api so a flood here can't touch
+  // updates or reports. See src/index.js.
+  "name": "hindsight-clips",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "routes": [{ "pattern": "clips.hindsighthq.app", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+  // Errors and our own messages only: no per-request logs, so no IP addresses.
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } },
+  // A bug or an abusive request can't burn CPU time for long.
+  "limits": { "cpu_ms": 2000 },
+  // Static files are free requests; only these paths run the Worker.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/api/*", "/c/*", "/v/*", "/t/*", "/"]
+  },
+  // Report alerts go to ALERT_TO, a secret, which must be a verified Email Routing address.
+  "send_email": [{ "name": "EMAIL" }],
+  // Flip to "true" to accept uploads from everyone.
+  "vars": { "UPLOADS_OPEN": "true" },
+  "r2_buckets": [{ "binding": "CLIPS", "bucket_name": "hindsight-clips" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "hindsight-clips", "database_id": "a977ae6e-f3f4-496e-b7f8-7cc38a6c4941" }],
+  "ratelimits": [
+    { "name": "WRITE_LIMIT", "namespace_id": "1101", "simple": { "limit": 30, "period": 60 } }
+  ],
+  // Hourly: remove expired clips and correct the storage count.
+  "triggers": { "crons": ["17 * * * *"] }
+}

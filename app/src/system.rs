@@ -80,7 +80,6 @@ pub fn adopt_child(child: &std::process::Child) {
 pub fn copy_file_to_clipboard(path: &Path) -> anyhow::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
     use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT};
     use windows::Win32::UI::Shell::DROPFILES;
     const CF_HDROP: u32 = 15;
@@ -98,23 +97,45 @@ pub fn copy_file_to_clipboard(path: &Path) -> anyhow::Result<()> {
         (*drop).fWide = true.into();
         std::ptr::copy_nonoverlapping(wide.as_ptr(), p.add(header) as *mut u16, wide.len());
         let _ = GlobalUnlock(mem);
-
-        // Other apps hold the clipboard for a moment while reading it.
-        let mut open = OpenClipboard(None);
-        for _ in 0..10 {
-            if open.is_ok() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            open = OpenClipboard(None);
-        }
-        open?;
-        let _ = EmptyClipboard();
-        // On success the clipboard owns `mem`.
-        let set = SetClipboardData(CF_HDROP, Some(HANDLE(mem.0)));
-        let _ = CloseClipboard();
-        set?;
+        set_clipboard(CF_HDROP, HANDLE(mem.0))
     }
+}
+
+/// Put text on the clipboard. Done here rather than in the page, where
+/// WebView2 would ask the user for permission first.
+pub fn copy_text_to_clipboard(text: &str) -> anyhow::Result<()> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    const CF_UNICODETEXT: u32 = 13;
+
+    let wide: Vec<u16> = text.encode_utf16().chain([0]).collect();
+    unsafe {
+        let mem = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2)?;
+        let p = GlobalLock(mem) as *mut u16;
+        anyhow::ensure!(!p.is_null(), "out of memory");
+        std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
+        let _ = GlobalUnlock(mem);
+        set_clipboard(CF_UNICODETEXT, HANDLE(mem.0))
+    }
+}
+
+/// Replaces the clipboard with `data` in `format`; on success the clipboard owns it.
+unsafe fn set_clipboard(format: u32, data: windows::Win32::Foundation::HANDLE) -> anyhow::Result<()> {
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
+    // Other apps hold the clipboard for a moment while reading it.
+    let mut open = OpenClipboard(None);
+    for _ in 0..10 {
+        if open.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        open = OpenClipboard(None);
+    }
+    open?;
+    let _ = EmptyClipboard();
+    let set = SetClipboardData(format, Some(data));
+    let _ = CloseClipboard();
+    set?;
     Ok(())
 }
 

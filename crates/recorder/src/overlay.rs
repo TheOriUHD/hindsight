@@ -28,6 +28,8 @@ use windows_numerics::Vector2;
 pub enum Kind {
     Saved,
     Failed,
+    Paused,
+    Resumed,
 }
 
 struct Request {
@@ -282,7 +284,7 @@ unsafe fn render(req: &Request) -> anyhow::Result<Anim> {
     rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
 
     let (fw, fh) = (w as f32, h as f32);
-    let accent = if req.kind == Kind::Saved { 0xe5484d } else { 0xe2a336 };
+    let accent = if matches!(req.kind, Kind::Saved | Kind::Resumed) { 0xe5484d } else { 0xe2a336 };
     let bg = rt.CreateSolidColorBrush(&color(0x18191d, 1.0), None)?;
     let border = rt.CreateSolidColorBrush(&color(0x2d3037, 1.0), None)?;
     let accent_b = rt.CreateSolidColorBrush(&color(accent, 1.0), None)?;
@@ -321,7 +323,13 @@ unsafe fn render(req: &Request) -> anyhow::Result<Anim> {
         &accent_b,
     );
 
-    let title: Vec<u16> = if req.kind == Kind::Saved { "Clip saved" } else { "Clip not saved" }.encode_utf16().collect();
+    let title = match req.kind {
+        Kind::Saved => "Clip saved",
+        Kind::Failed => "Clip not saved",
+        Kind::Paused => "Recording paused",
+        Kind::Resumed => "Recording resumed",
+    };
+    let title: Vec<u16> = title.encode_utf16().collect();
     let sub: Vec<u16> = req.text.encode_utf16().collect();
     let text_left = left + 15.0 * s;
     rt.DrawText(&title, &title_fmt, &D2D_RECT_F { left: text_left, top: title_top, right: fw - 16.0 * s, bottom: title_top + 20.0 * s }, &text_b, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);

@@ -6,3 +6,4 @@
 /dist
 /site/.wrangler
 /cloud/.wrangler
+/cloud/clips/.wrangler

@@ -98,6 +98,51 @@ fn delete_clip(path: PathBuf) -> Res<()> {
 }
 
 #[tauri::command]
+fn set_favorite(path: PathBuf, on: bool) -> Res<()> {
+    clips::set_favorite(&path, on).map_err(err)
+}
+
+#[tauri::command]
+async fn join_clips(handle: AppHandle, paths: Vec<PathBuf>) -> Res<PathBuf> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let enc = recording_encoder();
+        clips::join(&paths, &enc, &|pct| {
+            let _ = handle.emit("progress", Progress { job: "join".into(), pct });
+        })
+    })
+    .await
+    .map_err(err)?
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// Encodes the selection to fit, uploads it and returns the link.
+#[tauri::command]
+async fn share_clip(handle: AppHandle, path: PathBuf, start: f64, end: f64, title: String, game: String) -> Res<String> {
+    let progress = handle.clone();
+    let file = {
+        let path = path.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let enc = recording_encoder();
+            clips::share_encode(&path, start, end, crate::share::MAX_MB, &enc, &|pct| {
+                let _ = progress.emit("progress", Progress { job: "share".into(), pct });
+            })
+        })
+        .await
+        .map_err(err)?
+        .map_err(|e| format!("{e:#}"))?
+    };
+    let _ = handle.emit("progress", Progress { job: "upload".into(), pct: 0.0 });
+    let result = crate::share::upload(&path, &file, &title, &game, end - start).await;
+    let _ = std::fs::remove_file(&file);
+    result.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn unshare_clip(path: PathBuf) -> Res<()> {
+    crate::share::remove(&path).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 async fn scrub_proxy(handle: AppHandle, path: PathBuf, generate: bool) -> Option<PathBuf> {
     tauri::async_runtime::spawn_blocking(move || {
         let enc = recording_encoder();
@@ -116,6 +161,11 @@ fn copy_file(path: PathBuf) -> Res<()> {
 }
 
 #[tauri::command]
+fn copy_text(text: String) -> Res<()> {
+    system::copy_text_to_clipboard(&text).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 fn rename_clip(path: PathBuf, name: String) -> Res<PathBuf> {
     clips::rename(&path, &name).map_err(err)
 }
@@ -129,7 +179,7 @@ async fn filmstrip(path: PathBuf) -> Option<PathBuf> {
 /// page can't use this to launch arbitrary things.
 #[tauri::command]
 fn open_url(url: String) -> Res<()> {
-    let allowed = ["https://github.com/TheOriUHD", "https://hindsighthq.app"];
+    let allowed = ["https://github.com/TheOriUHD", "https://hindsighthq.app", "https://clips.hindsighthq.app"];
     if !allowed.iter().any(|p| url == *p || url.starts_with(&format!("{p}/"))) {
         return Err("link not allowed".into());
     }
@@ -248,11 +298,11 @@ async fn trim_clip(handle: AppHandle, path: PathBuf, start: f64, end: f64, exact
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-async fn export_clip(handle: AppHandle, path: PathBuf, start: f64, end: f64, target_mb: Option<f64>, codec: String, label: String) -> Res<PathBuf> {
+async fn export_clip(handle: AppHandle, path: PathBuf, start: f64, end: f64, target_mb: Option<f64>, codec: String, label: String, vertical: Option<bool>) -> Res<PathBuf> {
     tauri::async_runtime::spawn_blocking(move || {
         let enc = recording_encoder();
         let codec = if codec == "av1" { clips::ExportCodec::Av1 } else { clips::ExportCodec::H264 };
-        clips::export(&path, start, end, target_mb, codec, &label, &enc, &|pct| {
+        clips::export(&path, start, end, target_mb, codec, &label, vertical.unwrap_or(false), &enc, &|pct| {
             let _ = handle.emit("progress", Progress { job: "export".into(), pct });
         })
     })
@@ -428,6 +478,10 @@ pub fn run(mode: Mode) {
             monitors,
             list_clips,
             delete_clip,
+            set_favorite,
+            join_clips,
+            share_clip,
+            unshare_clip,
             scrub_proxy,
             app_version,
             open_logs,
@@ -438,6 +492,7 @@ pub fn run(mode: Mode) {
             cancel_job,
             open_url,
             copy_file,
+            copy_text,
             check_update,
             install_update,
             report_requested,

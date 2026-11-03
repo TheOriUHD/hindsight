@@ -106,10 +106,11 @@ fn vk_from_name(name: &str) -> Option<u16> {
     })
 }
 
-type Callback = Arc<dyn Fn() + Send + Sync>;
+/// Called with the index of the binding that fired.
+type Callback = Arc<dyn Fn(usize) + Send + Sync>;
 
 struct State {
-    binding: Binding,
+    bindings: Vec<Option<Binding>>,
     callback: Callback,
     held: HashSet<u16>,
     hwnd: isize,
@@ -118,10 +119,10 @@ struct State {
 
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
 
-/// Start the hotkey thread. Call once; use `set_binding` to change keys.
-pub fn start(binding: Binding, callback: impl Fn() + Send + Sync + 'static) {
+/// Start the hotkey thread. Call once; use `set_bindings` to change keys.
+pub fn start(bindings: Vec<Option<Binding>>, callback: impl Fn(usize) + Send + Sync + 'static) {
     let _ = STATE.set(Mutex::new(State {
-        binding,
+        bindings,
         callback: Arc::new(callback),
         held: HashSet::new(),
         hwnd: 0,
@@ -137,10 +138,10 @@ pub fn start(binding: Binding, callback: impl Fn() + Send + Sync + 'static) {
         .expect("spawn hotkey thread");
 }
 
-pub fn set_binding(binding: Binding) {
+pub fn set_bindings(bindings: Vec<Option<Binding>>) {
     if let Some(s) = STATE.get() {
         let mut s = s.lock().unwrap();
-        s.binding = binding;
+        s.bindings = bindings;
         if s.hwnd != 0 {
             register(&mut s);
         }
@@ -156,7 +157,7 @@ fn register(s: &mut State) {
     }
     // Only listen to the mouse when bound to a mouse button: 8 kHz mice would
     // otherwise wake this thread thousands of times a second for nothing.
-    let want_mouse = s.binding.uses_mouse();
+    let want_mouse = s.bindings.iter().flatten().any(Binding::uses_mouse);
     if want_mouse != s.mouse_registered {
         let mouse = if want_mouse {
             RAWINPUTDEVICE { usUsagePage: 1, usUsage: 2, dwFlags: RIDEV_INPUTSINK, hwndTarget: hwnd }
@@ -228,14 +229,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 
 fn handle(raw: &RAWINPUT) {
     let Some(state) = STATE.get() else { return };
-    let mut fire = false;
+    let mut fire = None;
     {
         let mut s = state.lock().unwrap();
-        let b = s.binding.clone();
-        let mods_ok = |held: &HashSet<u16>| {
+        let bindings = s.bindings.clone();
+        let mods_ok = |b: &Binding, held: &HashSet<u16>| {
             let has = |vk: VIRTUAL_KEY| held.contains(&vk.0);
             has(VK_CONTROL) == b.ctrl && has(VK_MENU) == b.alt && has(VK_SHIFT) == b.shift && (has(VK_LWIN) || has(VK_RWIN)) == b.win
         };
+        let matching = |key: Key, held: &HashSet<u16>| bindings.iter().position(|b| b.as_ref().is_some_and(|b| b.key == key && mods_ok(b, held)));
         if raw.header.dwType == RIM_TYPEKEYBOARD.0 {
             let kb = unsafe { raw.data.keyboard };
             let vk = match VIRTUAL_KEY(kb.VKey) {
@@ -249,7 +251,7 @@ fn handle(raw: &RAWINPUT) {
                 s.held.remove(&vk);
             } else if s.held.insert(vk) {
                 // Fresh press (not auto-repeat).
-                fire = b.key == Key::Vk(vk) && mods_ok(&s.held);
+                fire = matching(Key::Vk(vk), &s.held);
             }
         } else if raw.header.dwType == RIM_TYPEMOUSE.0 {
             let flags = unsafe { raw.data.mouse.Anonymous.Anonymous.usButtonFlags } as u32;
@@ -261,13 +263,13 @@ fn handle(raw: &RAWINPUT) {
                 None
             };
             if let Some(btn) = pressed {
-                fire = b.key == Key::Mouse(btn) && mods_ok(&s.held);
+                fire = matching(Key::Mouse(btn), &s.held);
             }
         }
     }
     // Don't fire while the user is typing a new hotkey into our own window.
-    if fire && !foreground_is_us() {
+    if let Some(slot) = fire.filter(|_| !foreground_is_us()) {
         let cb = state.lock().unwrap().callback.clone();
-        cb();
+        cb(slot);
     }
 }

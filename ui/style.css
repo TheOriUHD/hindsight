@@ -189,6 +189,21 @@ main { flex: 1; min-width: 0; position: relative; }
 }
 .clip:hover .thumb .copy { display: grid; }
 .thumb .copy:hover { background: rgba(0,0,0,.9); color: #fff; }
+.thumb .fav {
+  position: absolute; top: 6px; left: 6px; z-index: 1;
+  width: 28px; height: 28px; display: none; place-items: center;
+  border: 0; border-radius: var(--radius);
+  background: rgba(0,0,0,.7); color: var(--text); cursor: pointer;
+}
+.clip:hover .thumb .fav, .thumb .fav.on { display: grid; }
+.thumb .fav:hover { background: rgba(0,0,0,.9); color: #fff; }
+.fav.on .ic, #p-fav.on .ic { color: var(--accent); fill: var(--accent); }
+.clip.picked .thumb { outline: 2px solid var(--accent); }
+.thumb .pick-no {
+  position: absolute; left: 50%; top: 50%; z-index: 1; transform: translate(-50%, -50%);
+  width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--accent); color: #fff; font-weight: 600;
+}
 .thumb .hoverbar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--accent); width: 0; }
 .clip:hover .thumb { outline-color: var(--line-2); }
 .clip .name { margin-top: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

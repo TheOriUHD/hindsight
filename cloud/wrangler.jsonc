@@ -9,17 +9,22 @@
   ],
   "workers_dev": false,
   "preview_urls": false,
-  "observability": { "enabled": true },
+  // Errors and our own messages only: no per-request logs, so no IP addresses.
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } },
+  // Daily: problem reports older than twelve months are deleted.
+  "triggers": { "crons": ["41 3 * * *"] },
   "vars": {
     "ACCESS_TEAM": "acardiamc",
     "ACCESS_AUD": "a4b4f866e09f2e7623a16a128ed6b0ed93d8d4c73584927e3b0c3340c5496be4"
   },
   "r2_buckets": [
     { "binding": "UPDATES", "bucket_name": "hindsight-updates" },
-    { "binding": "REPORTS", "bucket_name": "hindsight-reports" }
+    { "binding": "REPORTS", "bucket_name": "hindsight-reports" },
+    { "binding": "CLIPS", "bucket_name": "hindsight-clips" }
   ],
   "d1_databases": [
-    { "binding": "DB", "database_name": "hindsight-reports", "database_id": "e5172292-c20b-42d5-99c8-fdc2e3407b52" }
+    { "binding": "DB", "database_name": "hindsight-reports", "database_id": "e5172292-c20b-42d5-99c8-fdc2e3407b52" },
+    { "binding": "CLIPS_DB", "database_name": "hindsight-clips", "database_id": "a977ae6e-f3f4-496e-b7f8-7cc38a6c4941" }
   ],
   "ratelimits": [
     { "name": "REPORT_LIMIT", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } }

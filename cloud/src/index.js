@@ -1,6 +1,6 @@
 // Hindsight backend.
 //   api.hindsighthq.app      GET /update/latest.json, GET /update/<file>, POST /report
-//   reports.hindsighthq.app  private report viewer (behind Cloudflare Access)
+//   reports.hindsighthq.app  private report viewer and clip moderation (behind Cloudflare Access)
 //
 // Update files live in R2 and are signed; the app verifies the signature, so
 // this server is not trusted with the code it hands out. Reports are stored
@@ -25,6 +25,18 @@ export default {
       console.error(e);
       return json({ error: "server error" }, 500);
     }
+  },
+  // The privacy policy promises problem reports are gone after twelve months.
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(
+      (async () => {
+        const cutoff = Date.now() - 365 * 86_400_000;
+        const { results } = await env.DB.prepare("SELECT id FROM reports WHERE created_at < ? LIMIT 500").bind(cutoff).all();
+        if (!results.length) return;
+        await env.REPORTS.delete(results.map((r) => `${r.id}.json`));
+        await env.DB.prepare("DELETE FROM reports WHERE created_at < ?").bind(cutoff).run();
+      })(),
+    );
   },
 };
 
@@ -121,11 +133,61 @@ a{color:#ee5d62}table{border-collapse:collapse;width:100%}td,th{border-bottom:1p
 th{color:#a2a6af;font-weight:600}pre{background:#18191d;border:1px solid #2d3037;border-radius:6px;overflow:auto;padding:12px;white-space:pre-wrap;word-break:break-word}
 h1{font-size:20px}h2{font-size:15px;margin-top:28px}.m{color:#a2a6af}
 </style>${body}`,
-    { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'", "x-content-type-options": "nosniff" } },
+    { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; media-src 'self'; form-action 'self'", "x-content-type-options": "nosniff" } },
   );
+
+/* Shared clips that were reported. Takedowns reach every cache within ten
+ * minutes, the time the clips Worker lets a file stay cached. */
+async function moderation(req, env, url, id, action) {
+  if (req.method === "POST") {
+    if (!id || action === ".mp4" || req.headers.get("origin") !== url.origin) return new Response("Forbidden", { status: 403 });
+    if (action === "/remove") {
+      const row = await env.CLIPS_DB.prepare("SELECT size FROM clips WHERE id = ?").bind(id).first();
+      await env.CLIPS.delete([`${id}.mp4`, `${id}.jpg`]);
+      await env.CLIPS_DB.batch([
+        env.CLIPS_DB.prepare("DELETE FROM clips WHERE id = ?").bind(id),
+        env.CLIPS_DB.prepare("DELETE FROM reactions WHERE clip_id = ?").bind(id),
+        env.CLIPS_DB.prepare("UPDATE reports SET resolved = 1 WHERE clip_id = ?").bind(id),
+        env.CLIPS_DB.prepare("UPDATE usage SET bytes = MAX(0, bytes - ?) WHERE id = 1").bind(row?.size ?? 0),
+      ]);
+    } else {
+      await env.CLIPS_DB.batch([
+        env.CLIPS_DB.prepare("UPDATE clips SET hidden = 0 WHERE id = ?").bind(id),
+        env.CLIPS_DB.prepare("UPDATE reports SET resolved = 1 WHERE clip_id = ?").bind(id),
+      ]);
+    }
+    return Response.redirect(`${url.origin}/clips`, 303);
+  }
+  if (req.method !== "GET") return new Response("Method not allowed", { status: 405 });
+  if (action === ".mp4") {
+    const object = await env.CLIPS.get(`${id}.mp4`);
+    if (!object) return new Response("Not found", { status: 404 });
+    return new Response(object.body, { headers: { "content-type": "video/mp4", "x-content-type-options": "nosniff" } });
+  }
+  const { results } = await env.CLIPS_DB.prepare(
+    `SELECT r.clip_id, r.created_at, r.reason, r.detail, r.contact, c.title, c.game, c.hidden
+     FROM reports r LEFT JOIN clips c ON c.id = r.clip_id WHERE r.resolved = 0 ORDER BY r.created_at DESC LIMIT 200`,
+  ).all();
+  const byClip = new Map();
+  for (const r of results) byClip.set(r.clip_id, [...(byClip.get(r.clip_id) ?? []), r]);
+  const usage = await env.CLIPS_DB.prepare("SELECT bytes, (SELECT COUNT(*) FROM clips) AS clips FROM usage").first();
+  const blocks = [...byClip].map(([cid, reports]) => {
+    const c = reports[0];
+    const lines = reports.map((r) => `<li>${esc(r.reason)}: ${esc(r.detail || "no details")} <span class="m">${esc(r.contact)}</span></li>`).join("");
+    if (c.title == null) return `<h2>${esc(cid)} (already gone)</h2><ul>${lines}</ul>`;
+    return `<h2>${esc(c.title)} <span class="m">${esc(c.game)}${c.hidden ? " · hidden" : ""}</span></h2>
+<video src="/clips/${esc(cid)}.mp4" controls width="480"></video><ul>${lines}</ul>
+<form method="post" action="/clips/${esc(cid)}/remove"><button>Remove clip</button></form>
+<form method="post" action="/clips/${esc(cid)}/keep"><button>Keep clip</button></form>`;
+  });
+  return page("Reported clips", `<p><a href="/">All reports</a></p><h1>Reported clips</h1>
+<p class="m">${usage.clips} clips stored, ${(usage.bytes / 1e9).toFixed(1)} of 500 GB.</p>${blocks.join("") || '<p class="m">Nothing reported.</p>'}`);
+}
 
 async function viewer(req, env, url) {
   if (!(await accessOk(req, env))) return new Response("Forbidden", { status: 403 });
+  const clip = url.pathname.match(/^\/clips(?:\/([2-9a-zA-Z]{10})(\.mp4|\/remove|\/keep))?$/);
+  if (clip) return await moderation(req, env, url, clip[1], clip[2]);
   if (req.method !== "GET") return new Response("Method not allowed", { status: 405 });
 
   const m = url.pathname.match(/^\/r\/([A-Z0-9]+)(\.json)?$/);
@@ -147,5 +209,5 @@ async function viewer(req, env, url) {
   const rows = results
     .map((r) => `<tr><td><a href="/r/${esc(r.id)}">${esc(r.id)}</a></td><td>${esc(new Date(r.created_at).toISOString().slice(0, 16).replace("T", " "))}</td><td>${esc(r.version)}</td><td>${esc(r.os)}<br><span class="m">${esc(r.gpu)}</span></td><td>${esc(r.summary)}</td></tr>`)
     .join("");
-  return page("Hindsight reports", `<h1>Hindsight reports</h1><table><tr><th>ID</th><th>Received (UTC)</th><th>Version</th><th>System</th><th>Summary</th></tr>${rows || '<tr><td colspan="5" class="m">No reports yet.</td></tr>'}</table>`);
+  return page("Hindsight reports", `<h1>Hindsight reports</h1><p><a href="/clips">Reported clips</a></p><table><tr><th>ID</th><th>Received (UTC)</th><th>Version</th><th>System</th><th>Summary</th></tr>${rows || '<tr><td colspan="5" class="m">No reports yet.</td></tr>'}</table>`);
 }

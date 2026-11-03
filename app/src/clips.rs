@@ -2,6 +2,7 @@
 //! through the bundled ffmpeg.exe: thumbnails, trims and size-targeted exports.
 
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader};
 use std::os::windows::process::CommandExt;
@@ -25,6 +26,9 @@ pub struct ClipInfo {
     pub size: u64,
     pub duration: f64,
     pub thumb: Option<PathBuf>,
+    pub favorite: bool,
+    /// The link, while this clip is shared.
+    pub share_url: Option<String>,
 }
 
 pub fn ffmpeg_exe() -> PathBuf {
@@ -77,8 +81,99 @@ fn exports_dir(clip: &Path) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/* ---------- favourites ----------
+ * A list of file names beside the settings; the clip files stay untouched. */
+fn favorites_path() -> PathBuf {
+    hindsight_recorder::data_dir().join("favorites.json")
+}
+
+fn favorites() -> HashSet<String> {
+    std::fs::read(favorites_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn save_favorites(names: &HashSet<String>) -> Result<()> {
+    std::fs::write(favorites_path(), serde_json::to_vec(names)?)?;
+    Ok(())
+}
+
+fn file_name(clip: &Path) -> String {
+    clip.file_name().unwrap_or_default().to_string_lossy().into()
+}
+
+/// A small JPEG for a clip's embed.
+pub fn share_thumb(clip: &Path) -> Result<Vec<u8>> {
+    let tmp = clip.with_extension("thumb.jpg");
+    let status = Command::new(ffmpeg_exe())
+        .args(["-v", "error", "-y", "-ss", "1", "-i"])
+        .arg(clip)
+        .args(["-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "6"])
+        .arg(&tmp)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .and_then(wait_adopted)?;
+    let data = std::fs::read(&tmp);
+    let _ = std::fs::remove_file(&tmp);
+    if !status.success() {
+        bail!("couldn't make a thumbnail");
+    }
+    Ok(data?)
+}
+
+pub fn video_size(clip: &Path) -> (u32, u32) {
+    let (w, h, _) = probe_video(clip);
+    (w, h)
+}
+
+pub fn set_favorite(clip: &Path, on: bool) -> Result<()> {
+    let mut names = favorites();
+    if on {
+        names.insert(file_name(clip));
+    } else {
+        names.remove(&file_name(clip));
+    }
+    save_favorites(&names)
+}
+
+/// Sends the oldest clips to the Recycle Bin until the folder fits. Favourites
+/// and `keep` (the clip just saved) stay, even if that leaves it over the limit.
+pub fn enforce_limit(dir: &Path, limit_gb: u32, keep: &Path) {
+    let limit = limit_gb as u64 * 1_000_000_000;
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = rd
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("mp4")))
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            Some((m.modified().ok()?, m.len(), e.path()))
+        })
+        .collect();
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    if total <= limit {
+        return;
+    }
+    let liked = favorites();
+    files.sort();
+    for (_, size, path) in files {
+        if total <= limit {
+            break;
+        }
+        if path == keep || liked.contains(&file_name(&path)) {
+            continue;
+        }
+        match delete(&path) {
+            Ok(()) => {
+                total -= size;
+                log::info!("storage limit: recycled {}", path.display());
+            }
+            Err(e) => log::warn!("storage limit: {e:#}"),
+        }
+    }
+}
+
 pub fn list(dir: &Path, on_thumb: impl Fn(PathBuf, PathBuf) + Send + Sync + 'static) -> Vec<ClipInfo> {
     let mut out = Vec::new();
+    let liked = favorites();
+    let shared = crate::share::links();
     let Ok(rd) = std::fs::read_dir(dir) else { return out };
     for e in rd.flatten() {
         let path = e.path();
@@ -103,6 +198,8 @@ pub fn list(dir: &Path, on_thumb: impl Fn(PathBuf, PathBuf) + Send + Sync + 'sta
             size: meta.len(),
             duration: hindsight_encode::probe_duration(&path).unwrap_or(0.0),
             thumb: thumb.exists().then(|| thumb.clone()),
+            favorite: liked.contains(&file_name(&path)),
+            share_url: shared.get(&file_name(&path)).cloned(),
             path: path.clone(),
         });
     }
@@ -361,11 +458,15 @@ pub fn export(
     target_mb: Option<f64>,
     codec: ExportCodec,
     label: &str,
+    vertical: bool,
     recording_encoder: &str,
     progress: &dyn Fn(f64),
 ) -> Result<PathBuf> {
     begin_job();
     let dur = (end - start).max(0.1);
+    // Width per unit of height: the middle of the frame for vertical video.
+    let aspect = if vertical { 9.0 / 16.0 } else { 16.0 / 9.0 };
+    let crop = if vertical { "crop=trunc(ih*9/16/2)*2:ih," } else { "" };
     let (_, src_h, src_fps) = probe_video(src);
     let src_fps = src_fps.max(1.0);
     let vendor = if recording_encoder.contains("nvenc") {
@@ -390,17 +491,17 @@ pub fn export(
                 .iter()
                 .map(|&(h, f)| (h.min(src_h), f64::min(f, src_fps)))
                 .find(|&(h, f)| {
-                    let w = h as f64 * 16.0 / 9.0;
+                    let w = h as f64 * aspect;
                     video * 1000.0 / (w * h as f64 * f) >= min_bpp
                 })
                 .unwrap_or((360.min(src_h), f64::min(30.0, src_fps)));
             // Don't spend more than the footage can use.
-            let ceiling = h as f64 * 16.0 / 9.0 * h as f64 * f * 0.25 / 1000.0;
+            let ceiling = h as f64 * aspect * h as f64 * f * 0.25 / 1000.0;
             (audio, video.min(ceiling), h, f)
         }
         None => {
             let (h, f) = (src_h.min(2160), f64::min(src_fps, 60.0));
-            (192.0, h as f64 * 16.0 / 9.0 * h as f64 * f * 0.12 / 1000.0, h, f)
+            (192.0, h as f64 * aspect * h as f64 * f * 0.12 / 1000.0, h, f)
         }
     };
 
@@ -414,7 +515,7 @@ pub fn export(
             "-ss".into(), format!("{start:.3}"), "-i".into(), src.to_string_lossy().into(),
             "-t".into(), format!("{dur:.3}"),
             "-map".into(), "0:v:0".into(), "-map".into(), "0:a:0?".into(),
-            "-vf".into(), format!("scale=-2:{height}:flags=lanczos,fps={fps}"),
+            "-vf".into(), format!("{crop}scale=-2:{height}:flags=lanczos,fps={fps}"),
             "-c:v".into(), encoder.clone(),
             "-b:v".into(), format!("{video_kbps:.0}k"),
             "-maxrate".into(), format!("{:.0}k", video_kbps * 1.5),
@@ -444,13 +545,13 @@ pub fn export(
             Err(e) if codec == ExportCodec::Av1 && attempt == 0 => {
                 log::warn!("AV1 export failed ({e:#}), using H.264");
                 let _ = std::fs::remove_file(&dst);
-                return export(src, start, end, target_mb, ExportCodec::H264, label, recording_encoder, progress);
+                return export(src, start, end, target_mb, ExportCodec::H264, label, vertical, recording_encoder, progress);
             }
             // The GPU's encoder isn't usable, e.g. a card too old for NVENC.
             Err(e) if vendor != "mf" && attempt == 0 => {
                 log::warn!("{encoder} export failed ({e:#}), using Media Foundation");
                 let _ = std::fs::remove_file(&dst);
-                return export(src, start, end, target_mb, codec, label, "", progress);
+                return export(src, start, end, target_mb, codec, label, vertical, "", progress);
             }
             Err(e) => {
                 let _ = std::fs::remove_file(&dst);
@@ -468,6 +569,133 @@ pub fn export(
     }
     let _ = std::fs::remove_file(&dst);
     bail!("couldn't fit the clip under {:.0} MB; try a shorter selection", target_mb.unwrap_or(0.0))
+}
+
+/// For a share link: 1080p60 H.264 at a fixed visual quality, so motion stays
+/// sharp instead of being squeezed to a size. Only a clip that still comes out
+/// over `max_mb` is re-encoded to fit.
+pub fn share_encode(src: &Path, start: f64, end: f64, max_mb: f64, recording_encoder: &str, progress: &dyn Fn(f64)) -> Result<PathBuf> {
+    begin_job();
+    let dur = (end - start).max(0.1);
+    // The most the video can average and still fit, with headroom for audio and the container.
+    let budget_kbps = max_mb * 8_000.0 * 0.93 / dur - 160.0;
+    if budget_kbps < 8_000.0 {
+        // Too long for sharp 1080p60: let the size fit pick resolution and frame rate.
+        return export(src, start, end, Some(max_mb), ExportCodec::H264, "Share", false, recording_encoder, progress);
+    }
+    let peak = format!("{:.0}k", budget_kbps.min(18_000.0));
+    let (_, src_h, src_fps) = probe_video(src);
+    let height = src_h.min(1080);
+    let fps = src_fps.clamp(1.0, 60.0);
+    let vendor = if recording_encoder.contains("nvenc") {
+        "nvenc"
+    } else if recording_encoder.contains("amf") {
+        "amf"
+    } else {
+        "mf"
+    };
+    let dst = sibling(&exports_dir(src)?, src, "Share");
+    let mut args: Vec<String> = vec![
+        "-hwaccel".into(), "auto".into(),
+        "-ss".into(), format!("{start:.3}"), "-i".into(), src.to_string_lossy().into(),
+        "-t".into(), format!("{dur:.3}"),
+        "-map".into(), "0:v:0".into(), "-map".into(), "0:a:0?".into(),
+        "-vf".into(), format!("scale=-2:{height}:flags=lanczos,fps={fps}"),
+        "-c:v".into(), format!("h264_{vendor}"),
+        "-g".into(), format!("{}", (fps * 2.0).round()),
+        "-pix_fmt".into(), "yuv420p".into(),
+    ];
+    // Quality-targeted where the encoder supports it, with a peak cap so a
+    // burst of particles can't balloon the file.
+    let cap = |a: &[&str]| a.iter().map(|s| if *s == "PEAK" { peak.clone() } else { s.to_string() }).collect::<Vec<String>>();
+    match vendor {
+        "nvenc" => args.extend(cap(&[
+            "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", "21", "-b:v", "0", "-maxrate", "PEAK", "-bufsize", "PEAK", "-rc-lookahead", "32", "-spatial-aq", "1", "-temporal-aq", "1", "-bf", "3", "-b_ref_mode", "middle",
+        ])),
+        "amf" => args.extend(cap(&["-quality", "quality", "-rc", "qvbr", "-qvbr_quality_level", "23", "-maxrate", "PEAK", "-bufsize", "PEAK"])),
+        _ => args.extend(cap(&["-b:v", "PEAK", "-maxrate", "PEAK", "-bufsize", "PEAK"])),
+    }
+    args.extend(["-c:a".into(), "aac".into(), "-b:a".into(), "160k".into(), "-ac".into(), "2".into()]);
+    args.extend(["-movflags".into(), "+faststart".into(), dst.to_string_lossy().into()]);
+    match run_ffmpeg(&args, dur, progress) {
+        Ok(()) => {}
+        Err(e) if cancelled() => {
+            let _ = std::fs::remove_file(&dst);
+            return Err(e);
+        }
+        Err(e) => {
+            log::warn!("share encode with {vendor} failed ({e:#}), fitting to size instead");
+            let _ = std::fs::remove_file(&dst);
+            return export(src, start, end, Some(max_mb), ExportCodec::H264, "Share", false, "", progress);
+        }
+    }
+    let size = std::fs::metadata(&dst).map(|m| m.len() as f64).unwrap_or(f64::MAX);
+    log::info!("share encode {height}p {fps} fps: {:.1} MB for {dur:.1} s", size / 1e6);
+    if size <= max_mb * 1_000_000.0 {
+        return Ok(dst);
+    }
+    let _ = std::fs::remove_file(&dst);
+    export(src, start, end, Some(max_mb), ExportCodec::H264, "Share", false, recording_encoder, progress)
+}
+
+fn has_audio(src: &Path) -> bool {
+    let out = Command::new(ffmpeg_exe()).arg("-hide_banner").arg("-i").arg(src).creation_flags(CREATE_NO_WINDOW).output();
+    out.map(|o| String::from_utf8_lossy(&o.stderr).contains("Audio:")).unwrap_or(false)
+}
+
+/// The filter that plays clips one after another at one size and frame rate.
+/// Clips can come from different settings, so each is fitted to the first;
+/// a clip without sound gets silence, because concat needs audio on all of them.
+fn join_filter(clips: &[(bool, f64)], w: u32, h: u32, fps: f64) -> String {
+    let mut f = String::new();
+    let mut pairs = String::new();
+    for (i, (audio, dur)) in clips.iter().enumerate() {
+        f += &format!("[{i}:v:0]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p[v{i}];");
+        if *audio {
+            f += &format!("[{i}:a:0]aresample=48000,aformat=channel_layouts=stereo[a{i}];");
+        } else {
+            f += &format!("anullsrc=r=48000:cl=stereo,atrim=duration={dur:.3}[a{i}];");
+        }
+        pairs += &format!("[v{i}][a{i}]");
+    }
+    f + &pairs + &format!("concat=n={}:v=1:a=1[v][a]", clips.len())
+}
+
+/// Joins clips, in order, into a new clip in the library.
+pub fn join(paths: &[PathBuf], recording_encoder: &str, progress: &dyn Fn(f64)) -> Result<PathBuf> {
+    begin_job();
+    let first = paths.first().context("no clips")?;
+    if paths.len() < 2 {
+        bail!("pick at least two clips");
+    }
+    let (w, h, fps) = probe_video(first);
+    let (w, h, fps) = (w & !1, h & !1, fps.clamp(1.0, 60.0));
+    let clips: Vec<(bool, f64)> = paths.iter().map(|p| (has_audio(p), hindsight_encode::probe_duration(p).unwrap_or(0.0))).collect();
+    let total: f64 = clips.iter().map(|c| c.1).sum();
+    let kbps = w as f64 * h as f64 * fps * 0.12 / 1000.0;
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H-%M-%S");
+    let dst = first.with_file_name(format!("Montage {stamp}.mp4"));
+    let build = |encoder: &str| -> Vec<String> {
+        let mut args: Vec<String> = Vec::new();
+        for p in paths {
+            args.extend(["-i".into(), p.to_string_lossy().into()]);
+        }
+        args.extend(["-filter_complex".into(), join_filter(&clips, w, h, fps), "-map".into(), "[v]".into(), "-map".into(), "[a]".into()]);
+        args.extend(["-c:v".into(), encoder.into(), "-b:v".into(), format!("{kbps:.0}k"), "-maxrate".into(), format!("{:.0}k", kbps * 1.5), "-bufsize".into(), format!("{:.0}k", kbps * 2.0)]);
+        args.extend(["-c:a".into(), "aac".into(), "-b:a".into(), "192k".into(), "-movflags".into(), "+faststart".into(), dst.to_string_lossy().into()]);
+        args
+    };
+    let encoder = h264_encoder(recording_encoder);
+    let mut result = run_ffmpeg(&build(encoder), total, progress);
+    if result.is_err() && !cancelled() && encoder != "h264_mf" {
+        log::warn!("join with {encoder} failed, using Media Foundation");
+        result = run_ffmpeg(&build("h264_mf"), total, progress);
+    }
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&dst);
+        return Err(e);
+    }
+    Ok(dst)
 }
 
 /// The 360p all-keyframe copy the player scrubs through. The recorder writes
@@ -520,6 +748,26 @@ fn wait_adopted(mut child: std::process::Child) -> std::io::Result<std::process:
 
 pub const STRIP_TILES: u32 = 32;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn join_filter_fills_in_silence() {
+        let f = join_filter(&[(true, 10.0), (false, 5.5)], 1920, 1080, 60.0);
+        assert!(f.contains("[0:a:0]aresample=48000"));
+        assert!(f.contains("anullsrc=r=48000:cl=stereo,atrim=duration=5.500[a1];"));
+        assert!(f.ends_with("[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]"));
+    }
+
+    #[test]
+    fn event_clips_keep_their_game_and_stay_in_the_library() {
+        let stem = "Counter-Strike 2 2026-11-01 22-10-00 Double kill";
+        assert_eq!(game_from_name(stem), "Counter-Strike 2");
+        assert!(!is_old_export(stem));
+    }
+}
+
 fn strip_path(clip: &Path) -> PathBuf {
     hindsight_recorder::scrub_path(clip).with_extension("strip.jpg")
 }
@@ -566,6 +814,11 @@ pub fn rename(src: &Path, new_name: &str) -> Result<PathBuf> {
         bail!("a clip with that name already exists");
     }
     std::fs::rename(src, &dst)?;
+    let mut liked = favorites();
+    if liked.remove(&file_name(src)) {
+        liked.insert(file_name(&dst));
+        let _ = save_favorites(&liked);
+    }
     let _ = std::fs::rename(hindsight_recorder::scrub_path(src), hindsight_recorder::scrub_path(&dst));
     let _ = std::fs::remove_file(strip_path(src));
     Ok(dst)

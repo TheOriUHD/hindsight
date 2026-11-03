@@ -58,6 +58,11 @@ pub struct Settings {
     /// Replay length = clip length.
     pub buffer_secs: u32,
     pub hotkey: String,
+    /// Saves a shorter clip; empty = off.
+    pub quick_hotkey: String,
+    pub quick_secs: u32,
+    /// Pauses or resumes recording; empty = off.
+    pub pause_hotkey: String,
     pub desktop_audio: bool,
     pub microphone: bool,
     /// Output device for desktop audio; None = Windows default.
@@ -77,6 +82,14 @@ pub struct Settings {
     pub save_sound: bool,
     /// Small "Clip saved" toast in the corner of the recorded screen.
     pub save_overlay: bool,
+    /// Oldest clips go to the Recycle Bin above this size; 0 = no limit.
+    pub storage_limit_gb: u32,
+    /// Automatic clips from each game's official event feed.
+    pub auto_cs2: bool,
+    pub auto_dota2: bool,
+    pub auto_lol: bool,
+    /// Also clip your own deaths.
+    pub auto_deaths: bool,
 }
 
 impl Default for Settings {
@@ -91,6 +104,9 @@ impl Default for Settings {
             quality: Quality::High,
             buffer_secs: 60,
             hotkey: "F8".into(),
+            quick_hotkey: String::new(),
+            quick_secs: 15,
+            pause_hotkey: String::new(),
             desktop_audio: true,
             microphone: false,
             output_device: None,
@@ -104,6 +120,11 @@ impl Default for Settings {
             copy_preset: "discord".into(),
             save_sound: true,
             save_overlay: true,
+            storage_limit_gb: 0,
+            auto_cs2: false,
+            auto_dota2: false,
+            auto_lol: false,
+            auto_deaths: false,
         }
     }
 }
@@ -130,6 +151,7 @@ impl Settings {
     pub fn sanitized(mut self) -> Self {
         self.fps = self.fps.clamp(24, 360);
         self.buffer_secs = self.buffer_secs.clamp(5, 600);
+        self.quick_secs = self.quick_secs.clamp(5, self.buffer_secs);
         self
     }
 

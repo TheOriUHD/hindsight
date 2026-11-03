@@ -108,7 +108,9 @@ fn handle_ipc(handle: &AppHandle, req: Request) -> anyhow::Result<serde_json::Va
             if rec.settings().start_with_windows != settings.start_with_windows {
                 system::set_autostart(settings.start_with_windows)?;
             }
+            crate::events::prepare(&rec.settings(), &settings)?;
             rec.apply_settings(settings)?;
+            crate::events::start(&rec);
             refresh(handle);
             json!(null)
         }
@@ -159,7 +161,12 @@ pub fn run(autostarted: bool) {
             if settings.start_with_windows {
                 let _ = system::set_autostart(true);
             }
-            let recorder = Recorder::new(settings, |_| {});
+            let recorder = Recorder::new(settings, |clip| {
+                let (clip, limit) = (clip.to_path_buf(), Settings::load().storage_limit_gb);
+                if let (true, Some(dir)) = (limit > 0, clip.parent().map(ToOwned::to_owned)) {
+                    std::thread::spawn(move || crate::clips::enforce_limit(&dir, limit, &clip));
+                }
+            });
             app.manage(State { recorder: recorder.clone(), ui: Mutex::new(None), popout: Mutex::new(None), update: Mutex::new(None), report_requested: AtomicBool::new(false) });
 
             TrayIconBuilder::with_id("tray")
@@ -217,6 +224,8 @@ pub fn run(autostarted: bool) {
 
             let h = handle.clone();
             std::thread::spawn(move || watch_for_updates(h));
+
+            crate::events::start(&recorder);
 
             let h = handle.clone();
             std::thread::spawn(move || {
